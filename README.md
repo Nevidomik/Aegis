@@ -50,29 +50,35 @@ docs/
 
 ## Configuration
 
-Configuration is supplied through environment variables. Copy the example file:
+Each service loads its own `.env` file using a path anchored to that service, so
+commands behave the same from any working directory. Create the local files from
+the repository root:
 
 ```bash
-cp .env.example .env
+cp services/ui-service/.env.example services/ui-service/.env
+cp services/backend-service/.env.example services/backend-service/.env
+cp services/history-service/.env.example services/history-service/.env
 ```
 
-Later application features will require secrets such as the following; they
-must never be committed:
+Replace the placeholders for required secrets. They must never be committed:
 
 - `ABUSEIPDB_API_KEY`
 - `MARIADB_PASSWORD`
 
 ## Local development
 
-Create a virtual environment and install each service in editable mode with its
-development dependencies:
+Install `uv` 0.11 (the supported tool range is enforced by the root project),
+then create the repository environment from the committed lockfile:
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -e './services/ui-service[dev]'
-.venv/bin/pip install -e './services/backend-service[dev]'
-.venv/bin/pip install -e './services/history-service[dev]'
+uv sync --locked --all-packages --all-extras
 ```
+
+This installs all three independently declared service projects into `.venv`.
+Use `uv lock` after an intentional dependency change, review `uv.lock`, and
+commit the updated manifest and lockfile together. Normal setup and CI should
+use `--locked` so stale dependency metadata fails instead of being resolved
+implicitly.
 
 Run a service from the repository root, for example:
 
@@ -86,12 +92,11 @@ Run a service from the repository root, for example:
 Verification commands:
 
 ```bash
-ruff check .
-ruff format --check .
-pytest
+make check
 ```
 
-Database schema changes must be applied through Alembic migrations.
+Database schema changes must be applied through Alembic migrations. All
+migration commands in the History Service README run from the repository root.
 
 ## Current scope
 

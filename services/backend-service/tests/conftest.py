@@ -22,6 +22,13 @@ class FakeHistoryClient:
         self.list_request: dict[str, object] | None = None
         self.get_request: dict[str, object] | None = None
         self.records: list[CheckResponse] = []
+        self.ready_error: Exception | None = None
+        self.ready_request_id: str | None = None
+
+    async def ready(self, *, request_id: str) -> None:
+        self.ready_request_id = request_id
+        if self.ready_error is not None:
+            raise self.ready_error
 
     async def save(
         self, payload: HistoryCheckCreate, *, request_id: str

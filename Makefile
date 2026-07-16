@@ -1,15 +1,27 @@
-.PHONY: lint format test check
+UV_CACHE_DIR ?= /tmp/aegis-uv-cache
+
+.PHONY: sync lock lock-check lint format test check
+
+sync:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) uv sync --locked --all-packages --all-extras
+
+lock:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) uv lock
+
+lock-check:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) ./.venv/bin/uv lock --check
 
 lint:
-	ruff check .
+	./.venv/bin/ruff check .
 
 format:
-	ruff format .
+	./.venv/bin/ruff format .
 
 test:
-	pytest
+	./.venv/bin/pytest
 
 check:
-	ruff check .
-	ruff format --check .
-	pytest
+	UV_CACHE_DIR=$(UV_CACHE_DIR) ./.venv/bin/uv lock --check
+	./.venv/bin/ruff check .
+	./.venv/bin/ruff format --check .
+	./.venv/bin/pytest

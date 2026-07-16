@@ -1,8 +1,11 @@
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 from uuid import UUID
 
+import fastapi.dependencies.utils
+import fastapi.routing
 import pytest
 from history_service.database import get_session
 from history_service.main import app
@@ -59,9 +62,14 @@ def history_record(*, history_id: int = 145) -> IpCheckHistory:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
+def session() -> Mock:
+    return Mock()
+
+
+@pytest.fixture
+async def client(session: Mock) -> AsyncIterator[AsyncClient]:
     async def session_override() -> AsyncIterator[object]:
-        yield object()
+        yield session
 
     app.dependency_overrides[get_session] = session_override
     transport = ASGITransport(app=app)
@@ -73,6 +81,17 @@ async def client() -> AsyncIterator[AsyncClient]:
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def execute_sync_routes_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid worker-thread restrictions in the test sandbox."""
+
+    async def run_inline(function: Any, *args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(fastapi.routing, "run_in_threadpool", run_inline)
+    monkeypatch.setattr(fastapi.dependencies.utils, "run_in_threadpool", run_inline)
 
 
 @pytest.fixture

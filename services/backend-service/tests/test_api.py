@@ -22,6 +22,30 @@ async def seed_history(client: AsyncClient, history_client: FakeHistoryClient) -
 
 
 @pytest.mark.anyio
+async def test_readiness_checks_history_without_provider_lookup(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    response = await client.get("/health/ready", headers={"X-Request-ID": REQUEST_ID})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    assert history_client.ready_request_id == REQUEST_ID
+
+
+@pytest.mark.anyio
+async def test_readiness_maps_history_failure(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    history_client.ready_error = HistoryUnavailableError()
+
+    response = await client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "HISTORY_UNAVAILABLE"
+
+
+@pytest.mark.anyio
 async def test_check_propagates_request_id_and_normalized_result(
     client: AsyncClient, history_client: FakeHistoryClient
 ) -> None:

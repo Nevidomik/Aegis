@@ -134,3 +134,30 @@ async def test_lookup_rejects_malformed_or_invalid_responses(
     ) as client:
         with pytest.raises(UpstreamInvalidResponseError):
             await AbuseIPDBProvider(client).lookup(ip_address("8.8.8.8"), 30)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("isPublic", 1),
+        ("ipVersion", 6),
+        ("abuseConfidenceScore", "12"),
+        ("totalReports", 2_147_483_648),
+        ("lastReportedAt", "2026-07-15T18:30:00"),
+        ("isp", "x" * 256),
+    ],
+)
+@pytest.mark.anyio
+async def test_lookup_rejects_coerced_inconsistent_or_unbounded_fields(
+    field: str, value: object
+) -> None:
+    body = valid_response()
+    data = body["data"]
+    assert isinstance(data, dict)
+    data[field] = value
+    async with httpx.AsyncClient(
+        base_url="https://api.abuseipdb.test",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+    ) as client:
+        with pytest.raises(UpstreamInvalidResponseError):
+            await AbuseIPDBProvider(client).lookup(ip_address("8.8.8.8"), 30)

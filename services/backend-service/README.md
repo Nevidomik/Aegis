@@ -5,6 +5,14 @@ from AbuseIPDB, and persists successful checks through History's HTTP API.
 
 ## Configuration
 
+Create the service-local file from the repository root:
+
+```bash
+cp services/backend-service/.env.example services/backend-service/.env
+```
+
+Backend loads that file explicitly regardless of the current working directory:
+
 ```dotenv
 HISTORY_SERVICE_URL=http://127.0.0.1:8002
 HISTORY_TIMEOUT_SECONDS=5
@@ -16,19 +24,23 @@ ABUSEIPDB_WRITE_TIMEOUT_SECONDS=5
 ABUSEIPDB_POOL_TIMEOUT_SECONDS=5
 ```
 
-`ABUSEIPDB_API_KEY` is required and is read from the environment at application
-startup. Never commit or log a real key. The base URL is fixed in configuration,
-must use HTTPS, and cannot be controlled by request data.
+`ABUSEIPDB_API_KEY` is required and is read from the service-local environment
+file or an exported environment variable at application startup. Never commit or
+log a real key. The base URL is fixed in configuration, must use HTTPS, and
+cannot be controlled by request data.
 
-Install and run from the repository root:
+Install the locked workspace and run from the repository root:
 
 ```bash
-.venv/bin/pip install -e './services/backend-service[dev]'
+uv sync --locked --all-packages --all-extras
 .venv/bin/uvicorn backend_service.main:app \
   --app-dir services/backend-service/src \
   --host 127.0.0.1 \
   --port 8001
 ```
+
+Backend maintains separate lifecycle-owned HTTPX clients for History and
+AbuseIPDB. Both are reused across requests and closed during shutdown.
 
 `POST /api/v1/checks` accepts a public IPv4 or IPv6 address. It accepts an
 optional UUID `X-Request-ID`; otherwise Backend generates one. The same ID is

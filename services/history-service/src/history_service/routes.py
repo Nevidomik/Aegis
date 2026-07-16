@@ -1,11 +1,14 @@
 """HTTP routes and error mapping for the History service."""
 
+from collections.abc import Awaitable, Callable
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from history_service.database import get_session
@@ -20,6 +23,7 @@ from history_service.schemas import (
 from history_service.service import (
     HistoryService,
     HistoryUnavailableError,
+    IdempotencyConflictError,
     get_history_service,
 )
 
@@ -27,8 +31,8 @@ router = APIRouter()
 
 
 def request_id_from(request: Request) -> str:
-    """Use the propagated request ID or generate one for an error response."""
-    return request.headers.get("X-Request-ID", str(uuid4()))
+    """Return the request ID established by middleware."""
+    return str(getattr(request.state, "request_id", uuid4()))
 
 
 def error_response(
@@ -40,19 +44,62 @@ def error_response(
     return JSONResponse(status_code=status_code, content=body.model_dump())
 
 
+async def request_id_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    supplied_request_id = request.headers.get("X-Request-ID")
+    if supplied_request_id is None:
+        request_id = uuid4()
+    else:
+        try:
+            request_id = UUID(supplied_request_id)
+        except ValueError:
+            generated_request_id = str(uuid4())
+            response = error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="INVALID_REQUEST_ID",
+                message="X-Request-ID must be a valid UUID.",
+                request_id=generated_request_id,
+            )
+            response.headers["X-Request-ID"] = generated_request_id
+            return response
+
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = str(request_id)
+    return response
+
+
 @router.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
     """Confirm that the History service process is running."""
     return {"status": "ok"}
 
 
+@router.get("/health/ready", tags=["health"], response_model=None)
+def readiness(
+    session: Annotated[Session, Depends(get_session)],
+) -> dict[str, str] | JSONResponse:
+    """Confirm that the service can execute a minimal database query."""
+    try:
+        session.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not ready"},
+        )
+    return {"status": "ready"}
+
+
 @router.post(
     "/internal/v1/checks",
     response_model=HistoryRecord,
     status_code=status.HTTP_201_CREATED,
+    responses={409: {"model": ErrorResponse}},
     tags=["history"],
 )
-async def create_check(
+def create_check(
     payload: CheckCreate,
     response: Response,
     session: Annotated[Session, Depends(get_session)],
@@ -69,7 +116,7 @@ async def create_check(
     response_model=HistoryList,
     tags=["history"],
 )
-async def list_checks(
+def list_checks(
     query: Annotated[HistoryListQuery, Query()],
     session: Annotated[Session, Depends(get_session)],
     service: Annotated[HistoryService, Depends(get_history_service)],
@@ -89,7 +136,7 @@ async def list_checks(
     responses={404: {"model": ErrorResponse}},
     tags=["history"],
 )
-async def get_check(
+def get_check(
     history_id: int,
     request: Request,
     session: Annotated[Session, Depends(get_session)],
@@ -126,5 +173,17 @@ async def unavailable_exception_handler(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="HISTORY_UNAVAILABLE",
         message="History storage is temporarily unavailable.",
+        request_id=request_id_from(request),
+    )
+
+
+async def idempotency_conflict_exception_handler(
+    request: Request, _: IdempotencyConflictError
+) -> JSONResponse:
+    """Return a stable conflict when one idempotency key changes meaning."""
+    return error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code="IDEMPOTENCY_CONFLICT",
+        message="The request ID was already used with different check data.",
         request_id=request_id_from(request),
     )

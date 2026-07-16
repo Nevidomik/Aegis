@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ui_service.backend_client import (
@@ -68,6 +68,22 @@ def render_page(
 @router.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/health/ready", tags=["health"], response_model=None)
+async def readiness(
+    request: Request,
+    backend: Annotated[BackendClient, Depends(get_backend_client)],
+) -> dict[str, str] | JSONResponse:
+    request_id = request_id_for(request)
+    try:
+        await backend.ready(request_id=request_id)
+    except BackendClientError:
+        response = JSONResponse(status_code=503, content={"status": "not ready"})
+    else:
+        response = JSONResponse(content={"status": "ready"})
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)

@@ -2,12 +2,23 @@
 
 from datetime import UTC, datetime
 from ipaddress import ip_address
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from history_service.models import IpCheckHistory
+
+MAX_COUNT = 2_147_483_647
 
 
 def normalize_ip(value: str) -> str:
@@ -31,20 +42,20 @@ class CheckCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: UUID
-    ip_address: str
-    ip_version: int
-    is_public: bool
-    is_whitelisted: bool | None = None
-    abuse_confidence_score: int = Field(ge=0, le=100)
-    country_code: str | None = Field(default=None, min_length=2, max_length=2)
-    usage_type: str | None = Field(default=None, max_length=100)
-    isp: str | None = Field(default=None, max_length=255)
-    domain: str | None = Field(default=None, max_length=255)
-    total_reports: int = Field(ge=0)
-    num_distinct_users: int = Field(ge=0)
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    ip_version: Literal[4, 6]
+    is_public: StrictBool
+    is_whitelisted: StrictBool | None = None
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    usage_type: StrictStr | None = Field(default=None, max_length=100)
+    isp: StrictStr | None = Field(default=None, max_length=255)
+    domain: StrictStr | None = Field(default=None, max_length=255)
+    total_reports: StrictInt = Field(ge=0, le=MAX_COUNT)
+    num_distinct_users: StrictInt = Field(ge=0, le=MAX_COUNT)
     last_reported_at: datetime | None = None
-    max_age_days: int = Field(ge=1, le=365)
-    source: str = Field(min_length=1, max_length=32)
+    max_age_days: StrictInt = Field(ge=1, le=365)
+    source: StrictStr = Field(min_length=1, max_length=32)
     checked_at: datetime
 
     @field_validator("ip_address")
@@ -67,31 +78,23 @@ class CheckCreate(BaseModel):
         parsed_address = ip_address(self.ip_address)
         if self.ip_version != parsed_address.version:
             raise ValueError("ip_version does not match ip_address.")
-        if not self.is_public or not parsed_address.is_global:
+        if (
+            not self.is_public
+            or parsed_address.is_loopback
+            or parsed_address.is_private
+            or parsed_address.is_multicast
+            or parsed_address.is_link_local
+            or parsed_address.is_unspecified
+            or not parsed_address.is_global
+        ):
             raise ValueError("ip_address must be public and is_public must be true.")
         return self
 
 
-class HistoryRecord(BaseModel):
+class HistoryRecord(CheckCreate):
     """Serialized History record returned to callers."""
 
-    history_id: int
-    request_id: UUID
-    ip_address: str
-    ip_version: int
-    is_public: bool
-    is_whitelisted: bool | None
-    abuse_confidence_score: int
-    country_code: str | None
-    usage_type: str | None
-    isp: str | None
-    domain: str | None
-    total_reports: int
-    num_distinct_users: int
-    last_reported_at: datetime | None
-    max_age_days: int
-    source: str
-    checked_at: datetime
+    history_id: StrictInt = Field(gt=0)
 
     @classmethod
     def from_record(cls, record: IpCheckHistory) -> Self:
@@ -128,9 +131,11 @@ class HistoryList(BaseModel):
     """One page of History records."""
 
     items: list[HistoryRecord]
-    limit: int
-    offset: int
-    total: int
+    model_config = ConfigDict(extra="forbid")
+
+    limit: StrictInt = Field(ge=1, le=100)
+    offset: StrictInt = Field(ge=0, le=MAX_COUNT)
+    total: StrictInt = Field(ge=0, le=MAX_COUNT)
 
 
 class HistoryListQuery(BaseModel):
@@ -151,9 +156,9 @@ class HistoryListQuery(BaseModel):
 class ErrorDetail(BaseModel):
     """Stable error details."""
 
-    code: str
-    message: str
-    request_id: str
+    code: StrictStr = Field(min_length=1, max_length=64)
+    message: StrictStr = Field(min_length=1, max_length=500)
+    request_id: StrictStr = Field(min_length=1, max_length=36)
 
 
 class ErrorResponse(BaseModel):

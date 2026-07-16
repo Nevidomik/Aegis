@@ -26,8 +26,12 @@ def test_create_normalizes_ipv6_country_and_timestamp() -> None:
     [
         ({"ip_address": "not-an-ip"}, "valid IPv4 or IPv6"),
         ({"ip_address": "127.0.0.1"}, "must be public"),
+        ({"ip_address": "224.0.0.1"}, "must be public"),
         ({"ip_version": 6}, "does not match"),
         ({"checked_at": "2026-07-15T18:30:00"}, "include a timezone"),
+        ({"abuse_confidence_score": "12"}, "valid integer"),
+        ({"total_reports": 2_147_483_648}, "less than or equal"),
+        ({"isp": "x" * 256}, "at most 255"),
     ],
 )
 def test_create_rejects_invalid_normalized_data(

@@ -7,6 +7,22 @@ from .conftest import FakeBackendClient
 
 
 @pytest.mark.anyio
+async def test_readiness_reflects_backend_state(
+    client: AsyncClient, backend: FakeBackendClient
+) -> None:
+    request_id = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
+    ready = await client.get("/health/ready", headers={"X-Request-ID": request_id})
+    backend.ready_error = "Backend is unavailable"
+    unavailable = await client.get("/health/ready")
+
+    assert ready.status_code == 200
+    assert ready.json() == {"status": "ready"}
+    assert ready.headers["X-Request-ID"] == request_id
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"status": "not ready"}
+
+
+@pytest.mark.anyio
 async def test_main_page_displays_form_and_recent_history(
     client: AsyncClient, backend: FakeBackendClient
 ) -> None:

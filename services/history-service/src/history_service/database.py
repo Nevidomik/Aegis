@@ -1,6 +1,6 @@
 """SQLAlchemy engine and request-scoped session management."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import Generator
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine
@@ -21,7 +21,7 @@ def get_session_factory() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), expire_on_commit=False)
 
 
-async def get_session() -> AsyncGenerator[Session]:
+def get_session() -> Generator[Session]:
     """Provide exactly one SQLAlchemy session for an HTTP request."""
     session = get_session_factory()()
     try:

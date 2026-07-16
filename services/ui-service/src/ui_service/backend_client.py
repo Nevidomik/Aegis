@@ -1,10 +1,15 @@
 """HTTP client for the only service boundary available to UI."""
 
 import httpx
+from fastapi import Request
 from pydantic import BaseModel, ValidationError
 
-from ui_service.config import Settings, get_settings
-from ui_service.schemas import BackendErrorResponse, CheckResult, HistoryPage
+from ui_service.schemas import (
+    BackendErrorResponse,
+    CheckResult,
+    HistoryPage,
+    ReadinessResponse,
+)
 
 
 class BackendClientError(Exception):
@@ -14,9 +19,8 @@ class BackendClientError(Exception):
 class BackendClient:
     """Call only the documented Backend public API."""
 
-    def __init__(self, settings: Settings) -> None:
-        self.base_url = str(settings.backend_service_url).rstrip("/")
-        self.timeout = settings.backend_timeout_seconds
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
 
     async def check(
         self, *, ip_address: str, max_age_days: int, request_id: str
@@ -38,6 +42,10 @@ class BackendClient:
         )
         return self._validated_response(response, HistoryPage)
 
+    async def ready(self, *, request_id: str) -> None:
+        response = await self._request("GET", "/health/ready", request_id=request_id)
+        self._validated_response(response, ReadinessResponse)
+
     async def _request(
         self,
         method: str,
@@ -48,16 +56,13 @@ class BackendClient:
         json: object | None = None,
     ) -> httpx.Response:
         try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url, timeout=self.timeout
-            ) as client:
-                return await client.request(
-                    method,
-                    path,
-                    params=params,
-                    json=json,
-                    headers={"X-Request-ID": request_id},
-                )
+            return await self.client.request(
+                method,
+                path,
+                params=params,
+                json=json,
+                headers={"X-Request-ID": request_id},
+            )
         except httpx.RequestError as error:
             raise BackendClientError(
                 "Backend Service is unavailable. Please try again."
@@ -83,5 +88,5 @@ class BackendClient:
             ) from None
 
 
-async def get_backend_client() -> BackendClient:
-    return BackendClient(get_settings())
+async def get_backend_client(request: Request) -> BackendClient:
+    return request.app.state.backend_client

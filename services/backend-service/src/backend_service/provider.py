@@ -11,6 +11,9 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -39,17 +42,17 @@ class AbuseIPDBData(BaseModel):
         alias_generator=lambda name: _to_camel(name), extra="ignore"
     )
 
-    ip_address: str = Field(max_length=39)
-    is_public: bool
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    is_public: StrictBool
     ip_version: Literal[4, 6]
-    is_whitelisted: bool | None = None
-    abuse_confidence_score: int = Field(ge=0, le=100)
-    country_code: str | None = Field(default=None, min_length=2, max_length=2)
-    usage_type: str | None = Field(default=None, max_length=100)
-    isp: str | None = Field(default=None, max_length=255)
-    domain: str | None = Field(default=None, max_length=255)
-    total_reports: int = Field(ge=0)
-    num_distinct_users: int = Field(ge=0)
+    is_whitelisted: StrictBool | None = None
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    usage_type: StrictStr | None = Field(default=None, max_length=100)
+    isp: StrictStr | None = Field(default=None, max_length=255)
+    domain: StrictStr | None = Field(default=None, max_length=255)
+    total_reports: StrictInt = Field(ge=0, le=2_147_483_647)
+    num_distinct_users: StrictInt = Field(ge=0, le=2_147_483_647)
     last_reported_at: datetime | None = None
 
     @field_validator("country_code")
@@ -73,7 +76,15 @@ class AbuseIPDBData(BaseModel):
         self.ip_address = str(address)
         if address.version != self.ip_version:
             raise ValueError("AbuseIPDB returned a mismatched IP version.")
-        if not self.is_public:
+        if (
+            not self.is_public
+            or address.is_loopback
+            or address.is_private
+            or address.is_multicast
+            or address.is_link_local
+            or address.is_unspecified
+            or not address.is_global
+        ):
             raise ValueError("AbuseIPDB returned a non-public result.")
         return self
 

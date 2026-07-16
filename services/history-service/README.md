@@ -5,7 +5,14 @@ to MariaDB. It uses synchronous SQLAlchemy sessions and Alembic migrations.
 
 ## Configuration
 
-Export these variables before starting the service or running Alembic:
+Create the service-local file from the repository root:
+
+```bash
+cp services/history-service/.env.example services/history-service/.env
+```
+
+History and Alembic load that same file explicitly regardless of the current
+working directory:
 
 ```dotenv
 MARIADB_HOST=127.0.0.1
@@ -22,7 +29,7 @@ credentials.
 Install the service from the repository root:
 
 ```bash
-.venv/bin/pip install -e './services/history-service[dev]'
+uv sync --locked --all-packages --all-extras
 ```
 
 ## Migrations
@@ -30,23 +37,23 @@ Install the service from the repository root:
 Create a migration after changing ORM metadata:
 
 ```bash
-cd services/history-service
-../../.venv/bin/alembic revision --autogenerate -m "describe schema change"
+.venv/bin/alembic -c services/history-service/alembic.ini \
+  revision --autogenerate -m "describe schema change"
 ```
 
 Review every generated migration before applying it. Apply and verify migrations:
 
 ```bash
-../../.venv/bin/alembic upgrade head
-../../.venv/bin/alembic current --check-heads
-../../.venv/bin/alembic check
+.venv/bin/alembic -c services/history-service/alembic.ini upgrade head
+.venv/bin/alembic -c services/history-service/alembic.ini current --check-heads
+.venv/bin/alembic -c services/history-service/alembic.ini check
 ```
 
 To validate downgrade behavior against a disposable database only:
 
 ```bash
-../../.venv/bin/alembic downgrade base
-../../.venv/bin/alembic upgrade head
+.venv/bin/alembic -c services/history-service/alembic.ini downgrade base
+.venv/bin/alembic -c services/history-service/alembic.ini upgrade head
 ```
 
 The application never calls `create_all()`.
@@ -68,12 +75,11 @@ TEST_MARIADB_PASSWORD=replace-me
 Run them with:
 
 ```bash
-cd services/history-service
 MARIADB_HOST="$TEST_MARIADB_HOST" \
 MARIADB_PORT="$TEST_MARIADB_PORT" \
 MARIADB_DATABASE="$TEST_MARIADB_DATABASE" \
 MARIADB_USER="$TEST_MARIADB_USER" \
 MARIADB_PASSWORD="$TEST_MARIADB_PASSWORD" \
-  ../../.venv/bin/alembic upgrade head
-../../.venv/bin/pytest -m mariadb tests
+  .venv/bin/alembic -c services/history-service/alembic.ini upgrade head
+.venv/bin/pytest -m mariadb services/history-service/tests
 ```

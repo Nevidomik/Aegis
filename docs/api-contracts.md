@@ -118,8 +118,9 @@ Success:
 ```
 
 The response is the saved record, including `history_id`. A duplicate
-`request_id` returns the original record with `200 OK` and does not create a
-second row.
+`request_id` with equivalent normalized data returns the original record with
+`200 OK` and does not create a second row. Reusing a `request_id` with different
+data returns `409 IDEMPOTENCY_CONFLICT`.
 
 ### List checks
 
@@ -169,6 +170,7 @@ Recommended errors:
 | 400 | `INVALID_IP_ADDRESS` |
 | 400 | `NON_PUBLIC_IP_ADDRESS` |
 | 404 | `HISTORY_RECORD_NOT_FOUND` |
+| 409 | `IDEMPOTENCY_CONFLICT` |
 | 422 | `INVALID_REQUEST` |
 | 429 | `RATE_LIMIT_EXCEEDED` |
 | 502 | `UPSTREAM_INVALID_RESPONSE` |

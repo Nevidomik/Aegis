@@ -1,9 +1,9 @@
 """HTTP client for the History service boundary."""
 
 import httpx
+from fastapi import Request
 from pydantic import ValidationError
 
-from backend_service.config import Settings, get_settings
 from backend_service.exceptions import (
     HistoryInvalidResponseError,
     HistoryRecordNotFoundError,
@@ -13,15 +13,15 @@ from backend_service.schemas import (
     CheckResponse,
     HistoryCheckCreate,
     HistoryListResponse,
+    ReadinessResponse,
 )
 
 
 class HistoryClient:
     """Persist normalized checks through the History HTTP API."""
 
-    def __init__(self, settings: Settings) -> None:
-        self.base_url = str(settings.history_service_url).rstrip("/")
-        self.timeout = settings.history_timeout_seconds
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self.client = client
 
     async def save(
         self, payload: HistoryCheckCreate, *, request_id: str
@@ -82,6 +82,16 @@ class HistoryClient:
         except (ValueError, ValidationError) as error:
             raise HistoryInvalidResponseError from error
 
+    async def ready(self, *, request_id: str) -> None:
+        """Verify History readiness without touching AbuseIPDB."""
+        response = await self._request("GET", "/health/ready", request_id=request_id)
+        if response.status_code != 200:
+            self._raise_for_status(response.status_code)
+        try:
+            ReadinessResponse.model_validate(response.json())
+        except (ValueError, ValidationError) as error:
+            raise HistoryInvalidResponseError from error
+
     async def _request(
         self,
         method: str,
@@ -92,16 +102,13 @@ class HistoryClient:
         json: object | None = None,
     ) -> httpx.Response:
         try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url, timeout=self.timeout
-            ) as client:
-                return await client.request(
-                    method,
-                    path,
-                    params=params,
-                    json=json,
-                    headers={"X-Request-ID": request_id},
-                )
+            return await self.client.request(
+                method,
+                path,
+                params=params,
+                json=json,
+                headers={"X-Request-ID": request_id},
+            )
         except httpx.RequestError as error:
             raise HistoryUnavailableError from error
 
@@ -114,5 +121,5 @@ class HistoryClient:
         raise HistoryInvalidResponseError
 
 
-async def get_history_client() -> HistoryClient:
-    return HistoryClient(get_settings())
+async def get_history_client(request: Request) -> HistoryClient:
+    return request.app.state.history_client

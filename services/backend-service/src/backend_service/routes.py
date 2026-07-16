@@ -75,6 +75,16 @@ async def liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/health/ready", tags=["health"])
+async def readiness(
+    request: Request,
+    history_client: Annotated[HistoryClient, Depends(get_history_client)],
+) -> dict[str, str]:
+    """Confirm that Backend can reach its persistence dependency."""
+    await history_client.ready(request_id=current_request_id(request))
+    return {"status": "ready"}
+
+
 @router.post(
     "/api/v1/checks",
     response_model=CheckResponse,

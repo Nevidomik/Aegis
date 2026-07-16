@@ -41,6 +41,13 @@ class FakeBackendClient:
         self.history_error: str | None = None
         self.check_request: dict[str, object] | None = None
         self.history_request_id: str | None = None
+        self.ready_error: str | None = None
+        self.ready_request_id: str | None = None
+
+    async def ready(self, *, request_id: str) -> None:
+        self.ready_request_id = request_id
+        if self.ready_error is not None:
+            raise BackendClientError(self.ready_error)
 
     async def check(
         self, *, ip_address: str, max_age_days: int, request_id: str

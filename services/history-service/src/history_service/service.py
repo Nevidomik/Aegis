@@ -14,6 +14,10 @@ class HistoryUnavailableError(Exception):
     """Raised when MariaDB cannot complete a History operation."""
 
 
+class IdempotencyConflictError(Exception):
+    """Raised when one request ID is reused for different normalized data."""
+
+
 @dataclass(frozen=True)
 class CreateResult:
     """Result of an idempotent create operation."""
@@ -41,7 +45,7 @@ class HistoryService:
         try:
             existing = self.repository.get_by_request_id(session, request_id)
             if existing is not None:
-                return CreateResult(record=existing, created=False)
+                return self._existing_result(existing, payload)
 
             try:
                 record = self.repository.add(session, payload)
@@ -52,10 +56,32 @@ class HistoryService:
                 existing = self.repository.get_by_request_id(session, request_id)
                 if existing is None:
                     raise
-                return CreateResult(record=existing, created=False)
+                return self._existing_result(existing, payload)
         except SQLAlchemyError as error:
             session.rollback()
             raise HistoryUnavailableError from error
+
+    @classmethod
+    def _existing_result(
+        cls, existing: IpCheckHistory, payload: CheckCreate
+    ) -> CreateResult:
+        if not cls._equivalent(existing, payload):
+            raise IdempotencyConflictError
+        return CreateResult(record=existing, created=False)
+
+    @staticmethod
+    def _equivalent(existing: IpCheckHistory, payload: CheckCreate) -> bool:
+        payload_values = payload.model_dump()
+        payload_values["request_id"] = str(payload.request_id)
+        for timestamp_field in ("last_reported_at", "checked_at"):
+            value = payload_values[timestamp_field]
+            payload_values[timestamp_field] = (
+                value.replace(tzinfo=None) if value is not None else None
+            )
+        return all(
+            getattr(existing, field_name) == value
+            for field_name, value in payload_values.items()
+        )
 
     def get(self, session: Session, history_id: int) -> IpCheckHistory | None:
         try:
@@ -80,6 +106,6 @@ class HistoryService:
 history_service = HistoryService()
 
 
-async def get_history_service() -> HistoryService:
+def get_history_service() -> HistoryService:
     """Return the stateless History service."""
     return history_service
