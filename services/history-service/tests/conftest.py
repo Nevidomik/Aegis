@@ -1,0 +1,87 @@
+from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+import pytest
+from history_service.database import get_session
+from history_service.main import app
+from history_service.models import IpCheckHistory
+from history_service.service import get_history_service
+from httpx2 import ASGITransport, AsyncClient
+
+REQUEST_ID = UUID("6f5aa064-43e8-4dbb-a544-d60b68af5cbd")
+
+
+def check_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "request_id": str(REQUEST_ID),
+        "ip_address": "8.8.8.8",
+        "ip_version": 4,
+        "is_public": True,
+        "is_whitelisted": None,
+        "abuse_confidence_score": 0,
+        "country_code": "US",
+        "usage_type": "Data Center/Web Hosting/Transit",
+        "isp": "Google LLC",
+        "domain": "google.com",
+        "total_reports": 0,
+        "num_distinct_users": 0,
+        "last_reported_at": None,
+        "max_age_days": 90,
+        "source": "AbuseIPDB",
+        "checked_at": "2026-07-15T18:30:00Z",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def history_record(*, history_id: int = 145) -> IpCheckHistory:
+    return IpCheckHistory(
+        id=history_id,
+        request_id=str(REQUEST_ID),
+        ip_address="8.8.8.8",
+        ip_version=4,
+        is_public=True,
+        is_whitelisted=None,
+        abuse_confidence_score=0,
+        country_code="US",
+        usage_type="Data Center/Web Hosting/Transit",
+        isp="Google LLC",
+        domain="google.com",
+        total_reports=0,
+        num_distinct_users=0,
+        last_reported_at=None,
+        max_age_days=90,
+        source="AbuseIPDB",
+        checked_at=datetime(2026, 7, 15, 18, 30, tzinfo=UTC).replace(tzinfo=None),
+    )
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[AsyncClient]:
+    async def session_override() -> AsyncIterator[object]:
+        yield object()
+
+    app.dependency_overrides[get_session] = session_override
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+@pytest.fixture
+def override_service() -> Iterator[Any]:
+    def apply(service: object) -> None:
+        async def service_override() -> object:
+            return service
+
+        app.dependency_overrides[get_history_service] = service_override
+
+    yield apply
+    app.dependency_overrides.pop(get_history_service, None)

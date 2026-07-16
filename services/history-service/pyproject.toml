@@ -10,12 +10,15 @@ requires-python = ">=3.14"
 dependencies = [
   "alembic",
   "fastapi",
+  "pydantic-settings",
+  "pymysql",
   "sqlalchemy>=2.0",
   "uvicorn[standard]",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "httpx2",
   "pytest",
   "ruff",
 ]

@@ -88,7 +88,28 @@ The UI must not call these endpoints.
 POST /internal/v1/checks
 ```
 
-The body contains the normalized Backend result and a unique `request_id`.
+The body contains the normalized Backend result and a unique `request_id`:
+
+```json
+{
+  "request_id": "6f5aa064-43e8-4dbb-a544-d60b68af5cbd",
+  "ip_address": "8.8.8.8",
+  "ip_version": 4,
+  "is_public": true,
+  "is_whitelisted": null,
+  "abuse_confidence_score": 0,
+  "country_code": "US",
+  "usage_type": "Data Center/Web Hosting/Transit",
+  "isp": "Google LLC",
+  "domain": "google.com",
+  "total_reports": 0,
+  "num_distinct_users": 0,
+  "last_reported_at": null,
+  "max_age_days": 90,
+  "source": "AbuseIPDB",
+  "checked_at": "2026-07-15T18:30:00Z"
+}
+```
 
 Success:
 
@@ -96,7 +117,9 @@ Success:
 201 Created
 ```
 
-Duplicate `request_id` must not create a second row.
+The response is the saved record, including `history_id`. A duplicate
+`request_id` returns the original record with `200 OK` and does not create a
+second row.
 
 ### List checks
 
@@ -104,6 +127,10 @@ Duplicate `request_id` must not create a second row.
 GET /internal/v1/checks?limit=20&offset=0
 GET /internal/v1/checks?ip_address=8.8.8.8
 ```
+
+`limit` defaults to 20 and must be between 1 and 100. `offset` defaults to 0.
+Results are ordered by descending `history_id`. The response includes `items`,
+`limit`, `offset`, and the filtered `total`.
 
 ### Get one check
 
