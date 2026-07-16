@@ -121,7 +121,6 @@ GET /health/ready
 ```
 
 `live` confirms that the process is running.
-
 `ready` confirms that required dependencies are available.
 
 ## Error format

@@ -56,16 +56,34 @@ Configuration is supplied through environment variables. Copy the example file:
 cp .env.example .env
 ```
 
-Required secrets must never be committed:
+Later application features will require secrets such as the following; they
+must never be committed:
 
 - `ABUSEIPDB_API_KEY`
 - `MARIADB_PASSWORD`
 
 ## Local development
 
-The exact commands will be added after the service skeleton is created.
+Create a virtual environment and install each service in editable mode with its
+development dependencies:
 
-Planned verification commands:
+```bash
+python -m venv .venv
+.venv/bin/pip install -e './services/ui-service[dev]'
+.venv/bin/pip install -e './services/backend-service[dev]'
+.venv/bin/pip install -e './services/history-service[dev]'
+```
+
+Run a service from the repository root, for example:
+
+```bash
+.venv/bin/uvicorn ui_service.main:app \
+  --app-dir services/ui-service/src \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+Verification commands:
 
 ```bash
 ruff check .

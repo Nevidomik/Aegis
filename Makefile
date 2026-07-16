@@ -1,15 +1,15 @@
 .PHONY: lint format test check
 
 lint:
-  ruff check .
+	ruff check .
 
 format:
-  ruff format .
+	ruff format .
 
 test:
-  pytest
+	pytest
 
 check:
-  ruff check .
-  ruff format --check .
-  pytest
+	ruff check .
+	ruff format --check .
+	pytest

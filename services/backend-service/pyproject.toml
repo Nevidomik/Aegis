@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aegis-backend-service"
+version = "0.1.0"
+description = "Public API for Aegis"
+requires-python = ">=3.14"
+dependencies = [
+  "fastapi",
+  "httpx",
+  "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backend_service"]

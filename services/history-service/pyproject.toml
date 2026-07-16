@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aegis-history-service"
+version = "0.1.0"
+description = "Persistence API for Aegis"
+requires-python = ">=3.14"
+dependencies = [
+  "alembic",
+  "fastapi",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/history_service"]

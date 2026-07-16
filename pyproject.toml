@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+addopts = "-ra --import-mode=importlib"
+testpaths = [
+  "services/ui-service/tests",
+  "services/backend-service/tests",
+  "services/history-service/tests",
+]
+pythonpath = [
+  "services/ui-service/src",
+  "services/backend-service/src",
+  "services/history-service/src",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
