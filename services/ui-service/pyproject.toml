@@ -11,11 +11,14 @@ dependencies = [
   "fastapi",
   "httpx",
   "jinja2",
+  "pydantic-settings",
+  "python-multipart",
   "uvicorn[standard]",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "httpx2",
   "pytest",
   "ruff",
 ]

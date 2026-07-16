@@ -11,6 +11,16 @@ from .conftest import FakeHistoryClient
 REQUEST_ID = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
 
 
+async def seed_history(client: AsyncClient, history_client: FakeHistoryClient) -> None:
+    response = await client.post(
+        "/api/v1/checks",
+        json={"ip_address": "8.8.8.8"},
+        headers={"X-Request-ID": REQUEST_ID},
+    )
+    assert response.status_code == 201
+    assert history_client.records
+
+
 @pytest.mark.anyio
 async def test_check_propagates_request_id_and_normalized_result(
     client: AsyncClient, history_client: FakeHistoryClient
@@ -114,6 +124,152 @@ async def test_history_failure_becomes_safe_503(
         json={"ip_address": "8.8.8.8"},
         headers={"X-Request-ID": REQUEST_ID},
     )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "HISTORY_UNAVAILABLE",
+            "message": "History storage is temporarily unavailable.",
+            "request_id": REQUEST_ID,
+        }
+    }
+
+
+@pytest.mark.anyio
+async def test_list_history_forwards_pagination_filter_and_request_id(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    await seed_history(client, history_client)
+
+    response = await client.get(
+        "/api/v1/checks",
+        params={
+            "limit": 10,
+            "offset": 2,
+            "ip_address": "2606:4700:4700:0:0:0:0:1111",
+        },
+        headers={"X-Request-ID": REQUEST_ID},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    assert response.json()["limit"] == 10
+    assert response.json()["offset"] == 2
+    assert history_client.list_request == {
+        "limit": 10,
+        "offset": 2,
+        "ip_address": "2606:4700:4700::1111",
+        "request_id": REQUEST_ID,
+    }
+
+
+@pytest.mark.anyio
+async def test_list_history_uses_documented_defaults(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    response = await client.get("/api/v1/checks", headers={"X-Request-ID": REQUEST_ID})
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "limit": 20, "offset": 0, "total": 0}
+    assert history_client.list_request == {
+        "limit": 20,
+        "offset": 0,
+        "ip_address": None,
+        "request_id": REQUEST_ID,
+    }
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"limit": 0},
+        {"limit": 101},
+        {"offset": -1},
+    ],
+)
+@pytest.mark.anyio
+async def test_list_history_rejects_invalid_pagination(
+    client: AsyncClient, history_client: FakeHistoryClient, params: dict[str, int]
+) -> None:
+    response = await client.get(
+        "/api/v1/checks", params=params, headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert history_client.list_request is None
+
+
+@pytest.mark.anyio
+async def test_list_history_rejects_non_public_filter(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    response = await client.get(
+        "/api/v1/checks",
+        params={"ip_address": "127.0.0.1"},
+        headers={"X-Request-ID": REQUEST_ID},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "NON_PUBLIC_IP_ADDRESS"
+    assert history_client.list_request is None
+
+
+@pytest.mark.anyio
+async def test_get_history_returns_record_and_propagates_request_id(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    await seed_history(client, history_client)
+
+    response = await client.get(
+        "/api/v1/checks/145", headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    assert response.json()["history_id"] == 145
+    assert history_client.get_request == {
+        "history_id": 145,
+        "request_id": REQUEST_ID,
+    }
+
+
+@pytest.mark.anyio
+async def test_get_history_maps_not_found(
+    client: AsyncClient, history_client: FakeHistoryClient
+) -> None:
+    response = await client.get(
+        "/api/v1/checks/999", headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {
+            "code": "HISTORY_RECORD_NOT_FOUND",
+            "message": "The requested history record does not exist.",
+            "request_id": REQUEST_ID,
+        }
+    }
+
+
+@pytest.mark.anyio
+async def test_list_history_maps_dependency_failure(
+    client: AsyncClient, override_dependency: object
+) -> None:
+    class UnavailableHistoryClient(FakeHistoryClient):
+        async def list(
+            self,
+            *,
+            limit: int,
+            offset: int,
+            ip_address: str | None,
+            request_id: str,
+        ) -> object:
+            raise HistoryUnavailableError
+
+    override_dependency(get_history_client, UnavailableHistoryClient())  # type: ignore[operator]
+
+    response = await client.get("/api/v1/checks", headers={"X-Request-ID": REQUEST_ID})
 
     assert response.status_code == 503
     assert response.json() == {

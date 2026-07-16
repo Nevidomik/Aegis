@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Aegis IP Reputation</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        background: #f5f7fa;
+        color: #17202a;
+        margin: 0;
+      }
+      main {
+        margin: 2rem auto;
+        max-width: 62rem;
+        padding: 0 1rem;
+      }
+      section {
+        background: white;
+        border: 1px solid #dce2e8;
+        border-radius: 0.5rem;
+        margin-bottom: 1.25rem;
+        padding: 1.25rem;
+      }
+      form {
+        align-items: end;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: minmax(14rem, 1fr) 10rem auto;
+      }
+      label {
+        display: grid;
+        font-weight: 600;
+        gap: 0.35rem;
+      }
+      input, button {
+        border: 1px solid #9aa8b5;
+        border-radius: 0.35rem;
+        font: inherit;
+        padding: 0.6rem;
+      }
+      button {
+        background: #174ea6;
+        border-color: #174ea6;
+        color: white;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .error {
+        background: #fff0f0;
+        border-left: 0.3rem solid #b42318;
+        padding: 0.75rem;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: 14rem 1fr;
+        margin: 0;
+      }
+      dt, dd {
+        border-bottom: 1px solid #edf0f2;
+        margin: 0;
+        padding: 0.4rem;
+      }
+      dt { font-weight: 600; }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th, td {
+        border-bottom: 1px solid #dce2e8;
+        padding: 0.55rem;
+        text-align: left;
+      }
+      .table-wrap { overflow-x: auto; }
+      @media (max-width: 44rem) {
+        form { grid-template-columns: 1fr; }
+        dl { grid-template-columns: 1fr; }
+        dt { border-bottom: 0; padding-bottom: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Aegis IP Reputation</h1>
+      <p>Check a globally routable IPv4 or IPv6 address.</p>
+
+      <section aria-labelledby="check-heading">
+        <h2 id="check-heading">New check</h2>
+        <form method="post" action="/">
+          <label>
+            IP address
+            <input name="ip_address" value="{{ ip_address }}" required autocomplete="off">
+          </label>
+          <label>
+            Max age in days
+            <input name="max_age_days" value="{{ max_age_days }}" type="number" min="1" max="365" required>
+          </label>
+          <button type="submit">Check reputation</button>
+        </form>
+        {% if error %}
+          <p class="error" role="alert">{{ error }}</p>
+        {% endif %}
+      </section>
+
+      {% if result %}
+        <section aria-labelledby="result-heading">
+          <h2 id="result-heading">Current normalized result</h2>
+          <dl>
+            <dt>IP address</dt><dd>{{ result.ip_address }}</dd>
+            <dt>IP version</dt><dd>IPv{{ result.ip_version }}</dd>
+            <dt>Abuse confidence score</dt><dd>{{ result.abuse_confidence_score }}%</dd>
+            <dt>Whitelisted</dt><dd>{% if result.is_whitelisted is none %}Unknown{% elif result.is_whitelisted %}Yes{% else %}No{% endif %}</dd>
+            <dt>Country</dt><dd>{{ result.country_code or "Unknown" }}</dd>
+            <dt>Usage type</dt><dd>{{ result.usage_type or "Unknown" }}</dd>
+            <dt>ISP</dt><dd>{{ result.isp or "Unknown" }}</dd>
+            <dt>Domain</dt><dd>{{ result.domain or "Unknown" }}</dd>
+            <dt>Total reports</dt><dd>{{ result.total_reports }}</dd>
+            <dt>Distinct reporters</dt><dd>{{ result.num_distinct_users }}</dd>
+            <dt>Last reported</dt><dd>{{ result.last_reported_at or "Never" }}</dd>
+            <dt>Checked at</dt><dd>{{ result.checked_at }}</dd>
+            <dt>Source</dt><dd>{{ result.source }}</dd>
+          </dl>
+        </section>
+      {% endif %}
+
+      <section aria-labelledby="history-heading">
+        <h2 id="history-heading">Recent history</h2>
+        {% if history_error %}
+          <p class="error" role="alert">{{ history_error }}</p>
+        {% elif history and history.items %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>IP address</th>
+                  <th>Score</th>
+                  <th>Reports</th>
+                  <th>Country</th>
+                  <th>Checked at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in history.items %}
+                  <tr>
+                    <td>{{ item.ip_address }}</td>
+                    <td>{{ item.abuse_confidence_score }}%</td>
+                    <td>{{ item.total_reports }}</td>
+                    <td>{{ item.country_code or "Unknown" }}</td>
+                    <td>{{ item.checked_at }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p>Showing {{ history.items|length }} of {{ history.total }} stored checks.</p>
+        {% else %}
+          <p>No checks have been stored yet.</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

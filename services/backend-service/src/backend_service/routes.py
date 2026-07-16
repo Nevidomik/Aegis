@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -16,8 +16,15 @@ from backend_service.schemas import (
     CheckResponse,
     ErrorDetail,
     ErrorResponse,
+    HistoryListQuery,
+    HistoryListResponse,
 )
-from backend_service.service import CheckService, get_check_service
+from backend_service.service import (
+    CheckService,
+    HistoryReadService,
+    get_check_service,
+    get_history_read_service,
+)
 
 router = APIRouter()
 
@@ -88,6 +95,36 @@ async def create_check(
         provider,
         history_client,
     )
+
+
+@router.get(
+    "/api/v1/checks",
+    response_model=HistoryListResponse,
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["checks"],
+)
+async def list_checks(
+    query: Annotated[HistoryListQuery, Query()],
+    request: Request,
+    service: Annotated[HistoryReadService, Depends(get_history_read_service)],
+    history_client: Annotated[HistoryClient, Depends(get_history_client)],
+) -> HistoryListResponse:
+    return await service.list(query, request.state.request_id, history_client)
+
+
+@router.get(
+    "/api/v1/checks/{history_id}",
+    response_model=CheckResponse,
+    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["checks"],
+)
+async def get_check(
+    history_id: Annotated[int, Path(gt=0)],
+    request: Request,
+    service: Annotated[HistoryReadService, Depends(get_history_read_service)],
+    history_client: Annotated[HistoryClient, Depends(get_history_client)],
+) -> CheckResponse:
+    return await service.get(history_id, request.state.request_id, history_client)
 
 
 async def application_exception_handler(

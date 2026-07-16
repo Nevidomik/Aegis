@@ -7,6 +7,7 @@ import pytest
 from backend_service.config import Settings
 from backend_service.exceptions import (
     HistoryInvalidResponseError,
+    HistoryRecordNotFoundError,
     HistoryUnavailableError,
 )
 from backend_service.history_client import HistoryClient
@@ -50,6 +51,9 @@ class FakeAsyncClient:
         self.response = response
         self.headers: dict[str, str] | None = None
         self.json_body: object = None
+        self.method: str | None = None
+        self.path: str | None = None
+        self.params: dict[str, str | int] | None = None
 
     async def __aenter__(self) -> FakeAsyncClient:
         return self
@@ -57,9 +61,18 @@ class FakeAsyncClient:
     async def __aexit__(self, *_: object) -> None:
         return None
 
-    async def post(
-        self, _: str, *, json: object, headers: dict[str, str]
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str | int] | None,
+        json: object | None,
+        headers: dict[str, str],
     ) -> FakeResponse:
+        self.method = method
+        self.path = path
+        self.params = params
         self.headers = headers
         self.json_body = json
         if isinstance(self.response, Exception):
@@ -93,6 +106,8 @@ async def test_save_forwards_request_id_and_validates_response(
     assert saved.history_id == 145
     assert fake_client.headers == {"X-Request-ID": str(REQUEST_ID)}
     assert fake_client.json_body == payload.model_dump(mode="json")
+    assert fake_client.method == "POST"
+    assert fake_client.path == "/internal/v1/checks"
 
 
 @pytest.mark.anyio
@@ -116,3 +131,97 @@ async def test_save_rejects_invalid_history_response(monkeypatch: Any) -> None:
 
     with pytest.raises(HistoryInvalidResponseError):
         await history_client().save(history_payload(), request_id=str(REQUEST_ID))
+
+
+@pytest.mark.anyio
+async def test_list_forwards_query_and_validates_page(monkeypatch: Any) -> None:
+    payload = history_payload()
+    record = {"history_id": 145, **payload.model_dump(mode="json")}
+    fake_client = FakeAsyncClient(
+        FakeResponse(
+            200,
+            {"items": [record], "limit": 10, "offset": 2, "total": 1},
+        )
+    )
+    monkeypatch.setattr(
+        "backend_service.history_client.httpx.AsyncClient", lambda **_: fake_client
+    )
+
+    page = await history_client().list(
+        limit=10,
+        offset=2,
+        ip_address="8.8.8.8",
+        request_id=str(REQUEST_ID),
+    )
+
+    assert page.total == 1
+    assert page.items[0].history_id == 145
+    assert fake_client.method == "GET"
+    assert fake_client.path == "/internal/v1/checks"
+    assert fake_client.params == {
+        "limit": 10,
+        "offset": 2,
+        "ip_address": "8.8.8.8",
+    }
+    assert fake_client.headers == {"X-Request-ID": str(REQUEST_ID)}
+
+
+@pytest.mark.anyio
+async def test_get_forwards_id_and_validates_record(monkeypatch: Any) -> None:
+    payload = history_payload()
+    record = {"history_id": 145, **payload.model_dump(mode="json")}
+    fake_client = FakeAsyncClient(FakeResponse(200, record))
+    monkeypatch.setattr(
+        "backend_service.history_client.httpx.AsyncClient", lambda **_: fake_client
+    )
+
+    saved = await history_client().get(145, request_id=str(REQUEST_ID))
+
+    assert saved.history_id == 145
+    assert fake_client.method == "GET"
+    assert fake_client.path == "/internal/v1/checks/145"
+    assert fake_client.params is None
+    assert fake_client.headers == {"X-Request-ID": str(REQUEST_ID)}
+
+
+@pytest.mark.anyio
+async def test_get_maps_history_not_found(monkeypatch: Any) -> None:
+    fake_client = FakeAsyncClient(FakeResponse(404, {"error": {}}))
+    monkeypatch.setattr(
+        "backend_service.history_client.httpx.AsyncClient", lambda **_: fake_client
+    )
+
+    with pytest.raises(HistoryRecordNotFoundError):
+        await history_client().get(999, request_id=str(REQUEST_ID))
+
+
+@pytest.mark.anyio
+async def test_list_maps_5xx_to_unavailable(monkeypatch: Any) -> None:
+    fake_client = FakeAsyncClient(FakeResponse(503, {"error": {}}))
+    monkeypatch.setattr(
+        "backend_service.history_client.httpx.AsyncClient", lambda **_: fake_client
+    )
+
+    with pytest.raises(HistoryUnavailableError):
+        await history_client().list(
+            limit=20,
+            offset=0,
+            ip_address=None,
+            request_id=str(REQUEST_ID),
+        )
+
+
+@pytest.mark.anyio
+async def test_list_rejects_malformed_history_page(monkeypatch: Any) -> None:
+    fake_client = FakeAsyncClient(FakeResponse(200, {"items": "invalid"}))
+    monkeypatch.setattr(
+        "backend_service.history_client.httpx.AsyncClient", lambda **_: fake_client
+    )
+
+    with pytest.raises(HistoryInvalidResponseError):
+        await history_client().list(
+            limit=20,
+            offset=0,
+            ip_address=None,
+            request_id=str(REQUEST_ID),
+        )

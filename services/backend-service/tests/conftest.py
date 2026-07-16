@@ -2,10 +2,15 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
+from backend_service.exceptions import HistoryRecordNotFoundError
 from backend_service.history_client import get_history_client
 from backend_service.main import app
 from backend_service.provider import FakeReputationProvider, get_reputation_provider
-from backend_service.schemas import CheckResponse, HistoryCheckCreate
+from backend_service.schemas import (
+    CheckResponse,
+    HistoryCheckCreate,
+    HistoryListResponse,
+)
 from httpx2 import ASGITransport, AsyncClient
 
 
@@ -14,6 +19,9 @@ class FakeHistoryClient:
         self.payload: HistoryCheckCreate | None = None
         self.request_id: str | None = None
         self.calls = 0
+        self.list_request: dict[str, object] | None = None
+        self.get_request: dict[str, object] | None = None
+        self.records: list[CheckResponse] = []
 
     async def save(
         self, payload: HistoryCheckCreate, *, request_id: str
@@ -21,7 +29,37 @@ class FakeHistoryClient:
         self.calls += 1
         self.payload = payload
         self.request_id = request_id
-        return CheckResponse(history_id=145, **payload.model_dump())
+        record = CheckResponse(history_id=145, **payload.model_dump())
+        self.records = [record]
+        return record
+
+    async def list(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        ip_address: str | None,
+        request_id: str,
+    ) -> HistoryListResponse:
+        self.list_request = {
+            "limit": limit,
+            "offset": offset,
+            "ip_address": ip_address,
+            "request_id": request_id,
+        }
+        return HistoryListResponse(
+            items=self.records,
+            limit=limit,
+            offset=offset,
+            total=len(self.records),
+        )
+
+    async def get(self, history_id: int, *, request_id: str) -> CheckResponse:
+        self.get_request = {"history_id": history_id, "request_id": request_id}
+        for record in self.records:
+            if record.history_id == history_id:
+                return record
+        raise HistoryRecordNotFoundError
 
 
 @pytest.fixture

@@ -49,6 +49,27 @@ class CheckResponse(HistoryCheckCreate):
     history_id: int
 
 
+class HistoryListQuery(BaseModel):
+    """Public pagination and optional IP filtering parameters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+    ip_address: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class HistoryListResponse(BaseModel):
+    """One validated page returned by History."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[CheckResponse]
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
 class ErrorDetail(BaseModel):
     code: str
     message: str

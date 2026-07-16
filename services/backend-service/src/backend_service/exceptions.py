@@ -96,6 +96,15 @@ class HistoryUnavailableError(ApplicationError):
         )
 
 
+class HistoryRecordNotFoundError(ApplicationError):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=404,
+            code="HISTORY_RECORD_NOT_FOUND",
+            message="The requested history record does not exist.",
+        )
+
+
 class HistoryInvalidResponseError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
