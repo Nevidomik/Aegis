@@ -29,6 +29,22 @@ def normalize_ip(value: str) -> str:
         raise ValueError("The value must be a valid IPv4 or IPv6 address.") from error
 
 
+def normalize_public_ip(value: str) -> str:
+    """Return the canonical representation of a globally routable IP address."""
+    normalized = normalize_ip(value)
+    parsed = ip_address(normalized)
+    if (
+        parsed.is_loopback
+        or parsed.is_private
+        or parsed.is_multicast
+        or parsed.is_link_local
+        or parsed.is_unspecified
+        or not parsed.is_global
+    ):
+        raise ValueError("The IP address must be public.")
+    return normalized
+
+
 def normalize_utc(value: datetime) -> datetime:
     """Convert an aware timestamp to UTC."""
     if value.tzinfo is None or value.utcoffset() is None:
@@ -36,12 +52,37 @@ def normalize_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-class CheckCreate(BaseModel):
-    """A normalized successful lookup supplied by Backend."""
+class ApplicationCheckRequest(BaseModel):
+    """Application-facing request for one reputation lookup."""
 
     model_config = ConfigDict(extra="forbid")
 
-    request_id: UUID
+    ip_address: str = Field(min_length=1, max_length=100)
+    max_age_days: int = Field(default=30, ge=1, le=365)
+
+
+class BackendReputationRequest(BaseModel):
+    """Strict normalized request sent to Backend."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    max_age_days: StrictInt = Field(ge=1, le=365)
+
+    @field_validator("ip_address")
+    @classmethod
+    def require_canonical_public_ip(cls, value: str) -> str:
+        normalized = normalize_public_ip(value)
+        if normalized != value:
+            raise ValueError("The IP address must use its canonical representation.")
+        return normalized
+
+
+class BackendReputationResponse(BaseModel):
+    """Provider-independent response returned by Backend."""
+
+    model_config = ConfigDict(extra="forbid")
+
     ip_address: StrictStr = Field(min_length=1, max_length=39)
     ip_version: Literal[4, 6]
     is_public: StrictBool
@@ -89,6 +130,12 @@ class CheckCreate(BaseModel):
         ):
             raise ValueError("ip_address must be public and is_public must be true.")
         return self
+
+
+class CheckCreate(BackendReputationResponse):
+    """A normalized successful lookup ready for persistence."""
+
+    request_id: UUID
 
 
 class HistoryRecord(CheckCreate):
@@ -156,6 +203,8 @@ class HistoryListQuery(BaseModel):
 class ErrorDetail(BaseModel):
     """Stable error details."""
 
+    model_config = ConfigDict(extra="forbid")
+
     code: StrictStr = Field(min_length=1, max_length=64)
     message: StrictStr = Field(min_length=1, max_length=500)
     request_id: StrictStr = Field(min_length=1, max_length=36)
@@ -163,5 +212,13 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Stable API error envelope."""
+
+    error: ErrorDetail
+
+
+class BackendErrorResponse(BaseModel):
+    """Strict error envelope returned by Backend."""
+
+    model_config = ConfigDict(extra="forbid")
 
     error: ErrorDetail

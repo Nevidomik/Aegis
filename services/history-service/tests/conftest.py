@@ -7,10 +7,11 @@ from uuid import UUID
 import fastapi.dependencies.utils
 import fastapi.routing
 import pytest
+from history_service.backend_client import get_backend_client
 from history_service.database import get_session
 from history_service.main import app
 from history_service.models import IpCheckHistory
-from history_service.service import get_history_service
+from history_service.service import get_application_service, get_history_service
 from httpx2 import ASGITransport, AsyncClient
 
 REQUEST_ID = UUID("6f5aa064-43e8-4dbb-a544-d60b68af5cbd")
@@ -104,3 +105,16 @@ def override_service() -> Iterator[Any]:
 
     yield apply
     app.dependency_overrides.pop(get_history_service, None)
+
+
+@pytest.fixture
+def override_dependency() -> Iterator[Any]:
+    def apply(dependency: object, replacement: object) -> None:
+        def dependency_override() -> object:
+            return replacement
+
+        app.dependency_overrides[dependency] = dependency_override
+
+    yield apply
+    app.dependency_overrides.pop(get_application_service, None)
+    app.dependency_overrides.pop(get_backend_client, None)

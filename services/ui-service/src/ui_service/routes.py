@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from ui_service.backend_client import (
-    BackendClient,
-    BackendClientError,
-    get_backend_client,
+from ui_service.application_client import (
+    ApplicationClient,
+    ApplicationClientError,
+    get_application_client,
 )
 from ui_service.schemas import CheckResult, HistoryPage
 
@@ -30,11 +30,11 @@ def request_id_for(request: Request) -> str:
 
 
 async def load_history(
-    backend: BackendClient, request_id: str
+    application_client: ApplicationClient, request_id: str
 ) -> tuple[HistoryPage | None, str | None]:
     try:
-        return await backend.recent_history(request_id=request_id), None
-    except BackendClientError as error:
+        return await application_client.recent_history(request_id=request_id), None
+    except ApplicationClientError as error:
         return None, str(error)
 
 
@@ -73,12 +73,12 @@ async def liveness() -> dict[str, str]:
 @router.get("/health/ready", tags=["health"], response_model=None)
 async def readiness(
     request: Request,
-    backend: Annotated[BackendClient, Depends(get_backend_client)],
+    application_client: Annotated[ApplicationClient, Depends(get_application_client)],
 ) -> dict[str, str] | JSONResponse:
     request_id = request_id_for(request)
     try:
-        await backend.ready(request_id=request_id)
-    except BackendClientError:
+        await application_client.ready(request_id=request_id)
+    except ApplicationClientError:
         response = JSONResponse(status_code=503, content={"status": "not ready"})
     else:
         response = JSONResponse(content={"status": "ready"})
@@ -89,10 +89,10 @@ async def readiness(
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index(
     request: Request,
-    backend: Annotated[BackendClient, Depends(get_backend_client)],
+    application_client: Annotated[ApplicationClient, Depends(get_application_client)],
 ) -> HTMLResponse:
     request_id = request_id_for(request)
-    history, history_error = await load_history(backend, request_id)
+    history, history_error = await load_history(application_client, request_id)
     return render_page(
         request,
         request_id=request_id,
@@ -104,7 +104,7 @@ async def index(
 @router.post("/", response_class=HTMLResponse, include_in_schema=False)
 async def submit_check(
     request: Request,
-    backend: Annotated[BackendClient, Depends(get_backend_client)],
+    application_client: Annotated[ApplicationClient, Depends(get_application_client)],
     ip_address: Annotated[str, Form()] = "",
     max_age_days: Annotated[str, Form()] = "30",
 ) -> HTMLResponse:
@@ -123,15 +123,15 @@ async def submit_check(
             error = "Max age must be a whole number between 1 and 365."
         else:
             try:
-                result = await backend.check(
+                result = await application_client.check(
                     ip_address=ip_address.strip(),
                     max_age_days=parsed_max_age,
                     request_id=request_id,
                 )
-            except BackendClientError as backend_error:
-                error = str(backend_error)
+            except ApplicationClientError as application_error:
+                error = str(application_error)
 
-    history, history_error = await load_history(backend, request_id)
+    history, history_error = await load_history(application_client, request_id)
     return render_page(
         request,
         request_id=request_id,

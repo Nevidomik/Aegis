@@ -23,3 +23,16 @@ def test_history_env_file_is_absolute_and_service_local() -> None:
     assert SERVICE_ENV_FILE.is_absolute()
     assert SERVICE_ENV_FILE == Settings.model_config["env_file"]
     assert SERVICE_ENV_FILE.parent.name == "history-service"
+
+
+def test_backend_configuration_is_separate_from_database_credentials() -> None:
+    settings = Settings(
+        mariadb_database="aegis_history",
+        mariadb_user="history",
+        mariadb_password="secret",
+        backend_service_url="http://backend.test",
+        backend_timeout_seconds=3,
+    )
+
+    assert str(settings.backend_service_url) == "http://backend.test/"
+    assert settings.backend_timeout_seconds == 3

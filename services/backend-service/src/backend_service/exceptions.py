@@ -15,24 +15,6 @@ class ApplicationError(Exception):
         self.message = message
 
 
-class InvalidIPAddressError(ApplicationError):
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=400,
-            code="INVALID_IP_ADDRESS",
-            message="The supplied value is not a valid IP address.",
-        )
-
-
-class NonPublicIPAddressError(ApplicationError):
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=400,
-            code="NON_PUBLIC_IP_ADDRESS",
-            message="The supplied IP address is not globally routable.",
-        )
-
-
 class UpstreamTimeoutError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
@@ -84,31 +66,4 @@ class UpstreamInvalidResponseError(ApplicationError):
             status_code=502,
             code="UPSTREAM_INVALID_RESPONSE",
             message="The reputation provider returned an invalid response.",
-        )
-
-
-class HistoryUnavailableError(ApplicationError):
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=503,
-            code="HISTORY_UNAVAILABLE",
-            message="History storage is temporarily unavailable.",
-        )
-
-
-class HistoryRecordNotFoundError(ApplicationError):
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=404,
-            code="HISTORY_RECORD_NOT_FOUND",
-            message="The requested history record does not exist.",
-        )
-
-
-class HistoryInvalidResponseError(ApplicationError):
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=502,
-            code="HISTORY_INVALID_RESPONSE",
-            message="History storage returned an invalid response.",
         )

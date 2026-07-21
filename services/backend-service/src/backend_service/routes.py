@@ -4,26 +4,21 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from backend_service.exceptions import ApplicationError
-from backend_service.history_client import HistoryClient, get_history_client
 from backend_service.provider import AbuseIPDBProvider, get_reputation_provider
 from backend_service.schemas import (
-    CheckRequest,
-    CheckResponse,
     ErrorDetail,
     ErrorResponse,
-    HistoryListQuery,
-    HistoryListResponse,
+    InternalReputationRequest,
+    InternalReputationResponse,
 )
 from backend_service.service import (
-    CheckService,
-    HistoryReadService,
-    get_check_service,
-    get_history_read_service,
+    ReputationProxyService,
+    get_reputation_proxy_service,
 )
 
 router = APIRouter()
@@ -76,65 +71,31 @@ async def liveness() -> dict[str, str]:
 
 
 @router.get("/health/ready", tags=["health"])
-async def readiness(
-    request: Request,
-    history_client: Annotated[HistoryClient, Depends(get_history_client)],
-) -> dict[str, str]:
-    """Confirm that Backend can reach its persistence dependency."""
-    await history_client.ready(request_id=current_request_id(request))
+async def readiness() -> dict[str, str]:
+    """Confirm that Backend initialized with its required configuration."""
     return {"status": "ready"}
 
 
 @router.post(
-    "/api/v1/checks",
-    response_model=CheckResponse,
-    status_code=status.HTTP_201_CREATED,
-    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["checks"],
+    "/internal/v1/reputation-checks",
+    response_model=InternalReputationResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+    },
+    tags=["internal-reputation"],
 )
-async def create_check(
-    payload: CheckRequest,
-    request: Request,
-    service: Annotated[CheckService, Depends(get_check_service)],
+async def create_internal_reputation_check(
+    payload: InternalReputationRequest,
+    service: Annotated[ReputationProxyService, Depends(get_reputation_proxy_service)],
     provider: Annotated[AbuseIPDBProvider, Depends(get_reputation_provider)],
-    history_client: Annotated[HistoryClient, Depends(get_history_client)],
-) -> CheckResponse:
-    return await service.check(
-        payload,
-        request.state.request_id,
-        provider,
-        history_client,
-    )
-
-
-@router.get(
-    "/api/v1/checks",
-    response_model=HistoryListResponse,
-    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["checks"],
-)
-async def list_checks(
-    query: Annotated[HistoryListQuery, Query()],
-    request: Request,
-    service: Annotated[HistoryReadService, Depends(get_history_read_service)],
-    history_client: Annotated[HistoryClient, Depends(get_history_client)],
-) -> HistoryListResponse:
-    return await service.list(query, request.state.request_id, history_client)
-
-
-@router.get(
-    "/api/v1/checks/{history_id}",
-    response_model=CheckResponse,
-    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
-    tags=["checks"],
-)
-async def get_check(
-    history_id: Annotated[int, Path(gt=0)],
-    request: Request,
-    service: Annotated[HistoryReadService, Depends(get_history_read_service)],
-    history_client: Annotated[HistoryClient, Depends(get_history_client)],
-) -> CheckResponse:
-    return await service.get(history_id, request.state.request_id, history_client)
+) -> InternalReputationResponse:
+    """Return a validated provider result without persistence or idempotency."""
+    return await service.check(payload, provider)
 
 
 async def application_exception_handler(

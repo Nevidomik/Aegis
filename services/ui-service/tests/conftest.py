@@ -4,7 +4,10 @@ from uuid import UUID
 
 import pytest
 from httpx2 import ASGITransport, AsyncClient
-from ui_service.backend_client import BackendClientError, get_backend_client
+from ui_service.application_client import (
+    ApplicationClientError,
+    get_application_client,
+)
 from ui_service.main import app
 from ui_service.schemas import CheckResult, HistoryPage
 
@@ -33,7 +36,7 @@ def check_result(*, history_id: int = 145, ip_address: str = "8.8.8.8") -> Check
     )
 
 
-class FakeBackendClient:
+class FakeApplicationClient:
     def __init__(self) -> None:
         self.result = check_result()
         self.history = HistoryPage(items=[self.result], limit=20, offset=0, total=1)
@@ -47,7 +50,7 @@ class FakeBackendClient:
     async def ready(self, *, request_id: str) -> None:
         self.ready_request_id = request_id
         if self.ready_error is not None:
-            raise BackendClientError(self.ready_error)
+            raise ApplicationClientError(self.ready_error)
 
     async def check(
         self, *, ip_address: str, max_age_days: int, request_id: str
@@ -58,7 +61,7 @@ class FakeBackendClient:
             "request_id": request_id,
         }
         if self.check_error is not None:
-            raise BackendClientError(self.check_error)
+            raise ApplicationClientError(self.check_error)
         return self.result.model_copy(
             update={"ip_address": ip_address, "max_age_days": max_age_days}
         )
@@ -66,21 +69,23 @@ class FakeBackendClient:
     async def recent_history(self, *, request_id: str) -> HistoryPage:
         self.history_request_id = request_id
         if self.history_error is not None:
-            raise BackendClientError(self.history_error)
+            raise ApplicationClientError(self.history_error)
         return self.history
 
 
 @pytest.fixture
-def backend() -> FakeBackendClient:
-    return FakeBackendClient()
+def application_client() -> FakeApplicationClient:
+    return FakeApplicationClient()
 
 
 @pytest.fixture
-async def client(backend: FakeBackendClient) -> AsyncIterator[AsyncClient]:
-    async def backend_override() -> FakeBackendClient:
-        return backend
+async def client(
+    application_client: FakeApplicationClient,
+) -> AsyncIterator[AsyncClient]:
+    async def application_client_override() -> FakeApplicationClient:
+        return application_client
 
-    app.dependency_overrides[get_backend_client] = backend_override
+    app.dependency_overrides[get_application_client] = application_client_override
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as test_client:
         yield test_client

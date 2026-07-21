@@ -1,7 +1,7 @@
 # UI Service
 
 The UI service renders a single HTML page with Jinja2. Browsers submit checks to
-UI, and UI communicates only with Backend's public API.
+UI, and UI communicates only with History Service's application API.
 
 ## Configuration
 
@@ -14,8 +14,8 @@ cp services/ui-service/.env.example services/ui-service/.env
 The UI loads that file explicitly regardless of the current working directory:
 
 ```dotenv
-BACKEND_SERVICE_URL=http://127.0.0.1:8001
-BACKEND_TIMEOUT_SECONDS=5
+HISTORY_SERVICE_URL=http://127.0.0.1:8002
+HISTORY_TIMEOUT_SECONDS=5
 ```
 
 Install the locked workspace and run from the repository root:
@@ -28,13 +28,13 @@ uv sync --locked --all-packages --all-extras
   --port 8000
 ```
 
-UI reuses one lifecycle-owned HTTPX client for all Backend requests and closes
+UI reuses one lifecycle-owned HTTPX client for all History requests and closes
 it during application shutdown.
 
 The page is available at `http://127.0.0.1:8000/`. The UI contains no AbuseIPDB,
-History Service, or database configuration.
+Backend Service, or database configuration.
 
-Route tests replace the Backend client and make no live service calls:
+Route tests replace the application client and make no live service calls:
 
 ```bash
 .venv/bin/pytest services/ui-service/tests

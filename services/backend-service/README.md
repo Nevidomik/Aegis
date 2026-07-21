@@ -1,7 +1,9 @@
 # Backend Service
 
-The Backend validates public IP addresses, obtains normalized reputation data
-from AbuseIPDB, and persists successful checks through History's HTTP API.
+The Backend is an internal AbuseIPDB proxy. It accepts normalized lookup
+requests from History Service, validates and normalizes AbuseIPDB responses,
+and returns a provider-independent internal result. It has no persistence or
+history responsibilities.
 
 ## Configuration
 
@@ -14,8 +16,6 @@ cp services/backend-service/.env.example services/backend-service/.env
 Backend loads that file explicitly regardless of the current working directory:
 
 ```dotenv
-HISTORY_SERVICE_URL=http://127.0.0.1:8002
-HISTORY_TIMEOUT_SECONDS=5
 ABUSEIPDB_BASE_URL=https://api.abuseipdb.com
 ABUSEIPDB_API_KEY=replace-me
 ABUSEIPDB_CONNECT_TIMEOUT_SECONDS=5
@@ -39,15 +39,18 @@ uv sync --locked --all-packages --all-extras
   --port 8001
 ```
 
-Backend maintains separate lifecycle-owned HTTPX clients for History and
-AbuseIPDB. Both are reused across requests and closed during shutdown.
+Backend maintains one lifecycle-owned HTTPX client for AbuseIPDB. It is reused
+across requests and closed during shutdown.
 
-`POST /api/v1/checks` accepts a public IPv4 or IPv6 address. It accepts an
-optional UUID `X-Request-ID`; otherwise Backend generates one. The same ID is
-sent to History and returned in the response header and body.
+`POST /internal/v1/reputation-checks` is the internal provider-proxy boundary
+for History Service. It accepts only a canonical public `ip_address` and a
+`max_age_days` value from 1 through 365, calls the configured AbuseIPDB
+endpoint, and returns a validated normalized result. It forwards no request to
+History Service and performs no persistence or idempotency work. A valid
+`X-Request-ID` is returned in the response header and in safe error envelopes.
 
-Tests replace the History client and reputation provider or use HTTPX mock
-transports. The default suite makes no live AbuseIPDB calls:
+Tests replace the reputation provider or use HTTPX mock transports. The default
+suite makes no live AbuseIPDB calls:
 
 ```bash
 .venv/bin/pytest services/backend-service/tests

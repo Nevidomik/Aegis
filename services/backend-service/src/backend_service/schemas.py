@@ -1,9 +1,8 @@
-"""Pydantic contracts for Backend checks and History persistence."""
+"""Pydantic contracts for the internal Backend proxy."""
 
 from datetime import datetime
 from ipaddress import ip_address
 from typing import Literal, Self
-from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -43,13 +42,21 @@ def require_aware(value: datetime | None) -> datetime | None:
     return value
 
 
-class CheckRequest(BaseModel):
-    """Public request to check one IP address."""
+class InternalReputationRequest(BaseModel):
+    """Strict normalized lookup request accepted from History."""
 
     model_config = ConfigDict(extra="forbid")
 
-    ip_address: str = Field(min_length=1, max_length=100)
-    max_age_days: int = Field(default=30, ge=1, le=365)
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    max_age_days: StrictInt = Field(ge=1, le=365)
+
+    @field_validator("ip_address")
+    @classmethod
+    def require_normalized_public_ip(cls, value: str) -> str:
+        normalized = normalize_public_ip(value)
+        if value != normalized:
+            raise ValueError("The IP address must use its canonical representation.")
+        return normalized
 
 
 class ReputationResult(BaseModel):
@@ -88,10 +95,9 @@ class ReputationResult(BaseModel):
         return self
 
 
-class HistoryCheckCreate(ReputationResult):
-    """Normalized check sent to History."""
+class InternalReputationResponse(ReputationResult):
+    """Provider-independent result returned to History."""
 
-    request_id: UUID
     max_age_days: StrictInt = Field(ge=1, le=365)
     checked_at: datetime
 
@@ -101,41 +107,6 @@ class HistoryCheckCreate(ReputationResult):
         validated = require_aware(value)
         assert validated is not None
         return validated
-
-
-class CheckResponse(HistoryCheckCreate):
-    """Persisted check returned to the public caller."""
-
-    history_id: StrictInt = Field(gt=0)
-
-
-class HistoryListQuery(BaseModel):
-    """Public pagination and optional IP filtering parameters."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    limit: int = Field(default=20, ge=1, le=100)
-    offset: int = Field(default=0, ge=0)
-    ip_address: str | None = Field(default=None, min_length=1, max_length=100)
-
-
-class HistoryListResponse(BaseModel):
-    """One validated page returned by History."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    items: list[CheckResponse]
-    limit: StrictInt = Field(ge=1, le=100)
-    offset: StrictInt = Field(ge=0, le=MAX_COUNT)
-    total: StrictInt = Field(ge=0, le=MAX_COUNT)
-
-
-class ReadinessResponse(BaseModel):
-    """Validated readiness contract exposed by dependencies."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["ready"]
 
 
 class ErrorDetail(BaseModel):

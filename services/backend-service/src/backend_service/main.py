@@ -9,7 +9,6 @@ from fastapi.exceptions import RequestValidationError
 
 from backend_service.config import Settings, get_settings
 from backend_service.exceptions import ApplicationError
-from backend_service.history_client import HistoryClient
 from backend_service.provider import AbuseIPDBProvider
 from backend_service.routes import (
     application_exception_handler,
@@ -37,27 +36,15 @@ def create_abuseipdb_http_client(settings: Settings) -> httpx.AsyncClient:
     )
 
 
-def create_history_http_client(settings: Settings) -> httpx.AsyncClient:
-    """Create the History client owned by the application lifespan."""
-    return httpx.AsyncClient(
-        base_url=str(settings.history_service_url).rstrip("/"),
-        timeout=settings.history_timeout_seconds,
-        follow_redirects=False,
-    )
-
-
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Open and close distinct reusable dependency clients exactly once."""
+    """Open and close the reusable AbuseIPDB client exactly once."""
     settings = get_settings()
     abuseipdb_client = create_abuseipdb_http_client(settings)
-    history_http_client = create_history_http_client(settings)
     application.state.reputation_provider = AbuseIPDBProvider(abuseipdb_client)
-    application.state.history_client = HistoryClient(history_http_client)
     try:
         yield
     finally:
-        await history_http_client.aclose()
         await abuseipdb_client.aclose()
 
 

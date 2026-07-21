@@ -1,13 +1,23 @@
 """Business operations for persistent lookup history."""
 
 from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import Protocol
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from history_service.exceptions import InvalidIPAddressError, NonPublicIPAddressError
 from history_service.models import IpCheckHistory
 from history_service.repository import HistoryRepository
-from history_service.schemas import CheckCreate, HistoryListQuery
+from history_service.schemas import (
+    ApplicationCheckRequest,
+    BackendReputationRequest,
+    BackendReputationResponse,
+    CheckCreate,
+    HistoryListQuery,
+)
 
 
 class HistoryUnavailableError(Exception):
@@ -32,6 +42,14 @@ class ListResult:
 
     records: list[IpCheckHistory]
     total: int
+
+
+class BackendGateway(Protocol):
+    """Minimal internal proxy behavior required by application orchestration."""
+
+    def check(
+        self, payload: BackendReputationRequest, *, request_id: str
+    ) -> BackendReputationResponse: ...
 
 
 class HistoryService:
@@ -71,17 +89,18 @@ class HistoryService:
 
     @staticmethod
     def _equivalent(existing: IpCheckHistory, payload: CheckCreate) -> bool:
-        payload_values = payload.model_dump()
-        payload_values["request_id"] = str(payload.request_id)
-        for timestamp_field in ("last_reported_at", "checked_at"):
-            value = payload_values[timestamp_field]
-            payload_values[timestamp_field] = (
-                value.replace(tzinfo=None) if value is not None else None
-            )
-        return all(
-            getattr(existing, field_name) == value
-            for field_name, value in payload_values.items()
+        return (
+            existing.ip_address == payload.ip_address
+            and existing.max_age_days == payload.max_age_days
         )
+
+    def get_by_request_id(
+        self, session: Session, request_id: str
+    ) -> IpCheckHistory | None:
+        try:
+            return self.repository.get_by_request_id(session, request_id)
+        except SQLAlchemyError as error:
+            raise HistoryUnavailableError from error
 
     def get(self, session: Session, history_id: int) -> IpCheckHistory | None:
         try:
@@ -103,9 +122,84 @@ class HistoryService:
             raise HistoryUnavailableError from error
 
 
+def parse_public_address(value: str) -> IPv4Address | IPv6Address:
+    """Parse, normalize, and enforce application public-address rules."""
+    try:
+        address = ip_address(value)
+    except ValueError as error:
+        raise InvalidIPAddressError from error
+    if (
+        address.is_loopback
+        or address.is_private
+        or address.is_multicast
+        or address.is_link_local
+        or address.is_unspecified
+        or not address.is_global
+    ):
+        raise NonPublicIPAddressError
+    return address
+
+
+class ApplicationService:
+    """Orchestrate application requests across persistence and Backend."""
+
+    def __init__(self, history: HistoryService | None = None) -> None:
+        self.history = history or HistoryService()
+
+    def check(
+        self,
+        session: Session,
+        payload: ApplicationCheckRequest,
+        request_id: UUID,
+        backend: BackendGateway,
+    ) -> CreateResult:
+        address = parse_public_address(payload.ip_address)
+        normalized_ip = str(address)
+        existing = self.history.get_by_request_id(session, str(request_id))
+        if existing is not None:
+            if (
+                existing.ip_address != normalized_ip
+                or existing.max_age_days != payload.max_age_days
+            ):
+                raise IdempotencyConflictError
+            return CreateResult(record=existing, created=False)
+
+        backend_result = backend.check(
+            BackendReputationRequest(
+                ip_address=normalized_ip,
+                max_age_days=payload.max_age_days,
+            ),
+            request_id=str(request_id),
+        )
+        persistence_payload = CheckCreate(
+            request_id=request_id,
+            **backend_result.model_dump(),
+        )
+        return self.history.create(session, persistence_payload)
+
+    def list(
+        self, session: Session, query: HistoryListQuery
+    ) -> tuple[ListResult, HistoryListQuery]:
+        normalized_ip = None
+        if query.ip_address is not None:
+            normalized_ip = str(parse_public_address(query.ip_address))
+        normalized_query = HistoryListQuery(
+            limit=query.limit,
+            offset=query.offset,
+            ip_address=normalized_ip,
+        )
+        return self.history.list(session, normalized_query), normalized_query
+
+
 history_service = HistoryService()
+application_service = ApplicationService(history_service)
 
 
 def get_history_service() -> HistoryService:
     """Return the stateless History service."""
     return history_service
+
+
+def get_application_service() -> ApplicationService:
+    """Return the stateless application orchestration service."""
+    return application_service

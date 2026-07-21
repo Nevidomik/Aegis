@@ -1,267 +1,118 @@
-# AGENTS.md
-## Project overview
+1. Project Overview
 
-This repository contains a small multi-service IP reputation application.
+Educational multi-service IP reputation app. Checks public IPv4/v6 via AbuseIPDB, stores in MariaDB.
+Priorities: Strict boundaries, clear code, reliable tests, minimal infrastructure.
 
-The application checks public IPv4 and IPv6 addresses through the AbuseIPDB API
-and stores successful lookup history in MariaDB.
+2. Architecture & API Boundaries
 
-The project is an educational DevOps assignment. Priorities are:
+Three isolated services. The UI must not know which reputation provider is used.
 
-1. Clear service boundaries.
-2. Code that is easy to understand and explain.
-3. Correct application behavior.
-4. Reliable tests.
-5. Extensibility for later containerization, CI/CD, orchestration, and cloud deployment.
+Lookup Flow: UI ➔ History (Main Backend) ➔ Backend (API Proxy) ➔ AbuseIPDB ➔ (return) ➔ History ➔ MariaDB ➔ UI.
+History Flow: UI ➔ History ➔ MariaDB.
 
-Do not introduce unnecessary infrastructure or abstractions before they are needed.
+    ui-service:
 
-## Target architecture
+        Renders UI via FastAPI/Jinja2.
 
-The application consists of three services:
-- `ui-service`
-  - Renders the web interface using FastAPI and Jinja2.
-  - Communicates only with `backend-service`.
-  - Must not call AbuseIPDB directly.
-  - Must not access MariaDB directly.
+        Communicates only with history-service.
 
-- `backend-service`
-  - Exposes the public application API.
-  - Validates user-supplied IP addresses.
-  - Calls the AbuseIPDB API.
-  - Normalizes upstream responses.
-  - Sends successful results to `history-service`.
-  - Must not access MariaDB directly.
+    history-service (Main Backend) | Public API: /api/v1/*:
 
-- `history-service`
-  - Owns persistence.
-  - Stores and returns lookup history.
-  - Is the only service allowed to access MariaDB.
-  - Uses SQLAlchemy 2.x and Alembic.
+        The core application backend. Orchestrates lookups, validates/normalizes IPs.
 
-The request flow is:
+        The only service allowed to access MariaDB.
 
-User -> UI -> Backend
-                  ├──> AbuseIPDB
-                  └──> History Service -> MariaDB
+        Calls the proxy (backend-service) for external data.
 
-The UI must never communicate directly with AbuseIPDB, History Service, or MariaDB.
+    backend-service (API Proxy) | Internal API: /internal/v1/*:
 
-## Technology choices
+        Internal adapter exclusively for AbuseIPDB.
 
-Use the following unless the task explicitly requires a change:
-- Python 3.14 or the version declared by the project
-- FastAPI
-- Jinja2 for server-rendered UI
-- HTTPX for service-to-service and AbuseIPDB requests
-- Pydantic v2
-- pydantic-settings
-- SQLAlchemy 2.x
-- Alembic
-- MariaDB
-- pytest
-- Ruff
-- mypy or Pyright if already configured
+        Normalizes upstream requests/responses and maps errors.
 
-Do not add React, Vue, Node.js, Redis, Celery, Kafka, Kubernetes, or another
-database unless the user explicitly approves the architectural change.
+        Strict NO's: No UI communication, no MariaDB access, no history persistence.
 
-## Repository rules
+3. Responsibility Boundaries
 
-Keep each service independently runnable.
+    history-service (Main Backend): Core logic, IP/request validation, idempotency, MariaDB persistence & migrations, app-level errors.
 
-Each service should have:
-- its own application package;
-- its own dependency declaration;
-- its own tests;
-- its own configuration model;
-- its own README only when service-specific instructions are needed.
+    backend-service (API Proxy): AbuseIPDB integration (credentials, HTTPX calls, timeouts), provider data normalization, error mapping. (Must not touch DB).
 
-Do not create a shared runtime Python package merely to reuse Pydantic models
-between services. Service boundaries must remain explicit.
+    ui-service: HTML/Jinja2 rendering, form handling, UI error presentation.
 
-API contracts may be documented in:
-- OpenAPI specifications;
-- `docs/api-contracts.md`;
-- test fixtures;
-- contract tests.
+4. Tech Stack & Repository Rules
 
-## Coding conventions
+    Stack: FastAPI, HTTPX, Pydantic v2, SQLAlchemy 2.x, Alembic, MariaDB, pytest, Ruff, mypy/Pyright. (Jinja2 for UI).
 
-- Keep route handlers thin.
-- Keep business logic outside route handlers.
-- Keep database access outside route handlers.
-- Use APIRouter.
-- Use dependency injection where appropriate.
-- Use explicit Pydantic request/response models.
-- Never return ORM models directly.
-- Prefer simple code over abstractions.
-- Use descriptive names.
-- Type annotate public APIs.
-- Preserve exception causes.
+    Restrictions: Use standard pip/venv. Do not add external tools (Poetry, uv, Redis, Kafka, React) without explicit approval.
 
-## Reputation lookup
+    Strict Independence: Each service must be independently runnable with its own dependencies, config, and tests.
 
-- Use Python's `ipaddress` module.
-- Accept IPv4 and IPv6.
-- Reject:
-  - loopback
-  - private
-  - multicast
-  - link-local
-  - unspecified
-- Do not validate IPs with regex.
-- Normalize addresses before lookup.
-- Validate AbuseIPDB responses with Pydantic.
-- Use explicit HTTP timeouts.
-- Do not enable verbose responses unless requested.
+    No Shared Packages: Do not create a shared Python package for models. Duplicate boundary/Pydantic models between services to ensure independent validation.
 
-## Persistence rules
+5. Coding Conventions
 
-Only `history-service` may access MariaDB.
+    Thin Handlers: Move business & DB logic out of route handlers. Use APIRouter & Dependency Injection.
 
-Rules:
-- SQLAlchemy 2.x
-- Alembic for schema changes
-- One session per request
-- No create_all() in production
-- Review generated migrations
-- Store searchable data in columns
-- Raw JSON is supplementary only
-- request_id must be idempotent
+    Models: Explicit Pydantic models for I/O. Never return ORM models directly.
 
-## Configuration and secrets
+    Async/Sync Rules: Run synchronous SQLAlchemy operations in def (sync) handlers or worker threads, NOT in async def handlers.
 
-Configuration that differs between environments must come from environment variables.
+6. IP Validation & Proxy Rules
 
-Commit `.env.example`, but never commit `.env`.
+    IP Validation: Use Python's ipaddress module (no regex!). Accept global IPv4/IPv6, reject local/private/multicast. Normalize to compressed format. Both services validate inputs.
 
-Do not add real:
-- AbuseIPDB API keys;
-- MariaDB passwords;
-- access tokens;
-- credentials;
-- private URLs.
+    Proxy (backend-service) strict rules: HTTPX with timeouts. Validate upstream JSON via Pydantic. Return normalized data (never raw). Do not persist, implement idempotency, or log API keys.
 
-When adding a new setting:
+7. Orchestration & Persistence (history-service)
 
-1. Add it to the relevant settings model.
-2. Add a safe placeholder to `.env.example`.
-3. Document it in `docs/development.md` or the relevant README.
-4. Add validation where appropriate.
+    Lookup Flow: Validate IP/Request ➔ Check Idempotency ➔ Call Proxy ➔ Persist Success ➔ Return.
 
-## Error handling
+        Note: Do not persist failed lookups. Fail if DB save fails.
 
-Public errors should use a stable structure similar to:
+    Database: SQLAlchemy 2.x + Alembic (No create_all()). One session per request. Searchable fields must be relational columns, not raw JSON.
 
-```json
-{
-  "error": {
-    "code": "INVALID_IP_ADDRESS",
-    "message": "The supplied value is not a valid public IP address.",
-    "request_id": "..."
-  }
-}
-```
-Do not leak:
-- stack traces;
-- credentials;
-- internal URLs;
-- SQL statements;
-- raw upstream response bodies.
+    Idempotency: Based on request_id. Reused ID + same payload = return existing. Reused ID + different payload = 409 IDEMPOTENCY_CONFLICT.
 
-Use appropriate status codes.
 
-Examples:
-- 400 invalid or non-public IP;
-- 422 invalid request schema;
-- 429 application rate limit;
-- 502 invalid upstream response;
-- 503 unavailable dependency;
-- 504 upstream timeout.
+8. Config & Secrets
 
-## Logging
+    Environment Variables: Use env vars for config. Provide safe examples. Never commit secrets.
 
-Write logs to stdout.
+    Separation: Proxy gets AbuseIPDB keys; History gets DB creds; UI gets History URL.
 
-Prefer structured logs.
+    Security: Use SecretStr. Do NOT leak credentials in logs, Alembic configs, or error messages.
 
-Every request should carry a request ID where practical.
+9. Errors, Tracing & Logs
 
-Include useful context such as:
-- service name;
-- event name;
-- request ID;
-- duration;
-- HTTP status;
-- upstream service name.
+    Errors: history-service returns safe JSON errors (code, message, request_id). Proxy maps upstream issues to HTTP statuses (400, 429, 502, etc.). Never leak internal traces/DB details.
 
-Do not log:
-- API keys;
-- passwords;
-- complete authorization headers;
-- database connection URLs containing credentials.
+    Request IDs (request_id): Required for all requests. Must be passed across all 3 services for tracing and idempotency.
 
-## Testing requirements
+    Logging: Structured logs to stdout. Include request_id, duration, status. No secrets or raw payloads.
 
-Every meaningful change should include or update tests.
-Test behavior, not private implementation details.
+10. Health, Tests & Workflow
 
-At minimum:
-- unit tests for validation and normalization;
-- integration tests for service endpoints;
-- mocked AbuseIPDB responses;
-- database integration tests for history persistence;
-- tests for timeout and upstream error handling.
+    Health: /health/live & /health/ready. Readiness checks must not consume AbuseIPDB API quotas.
 
-Tests must not make live AbuseIPDB calls by default.
+    Tests: Mandatory for all changes (Unit, Endpoint, DB, Contract). Default tests must mock AbuseIPDB. Always add regression tests for bug fixes.
 
-Use fixtures for representative AbuseIPDB responses.
+    Verification Pipeline: Run ruff check/format ., pytest, mypy services, alembic check before completing tasks.
 
-When fixing a bug, add a regression test that fails before the fix and passes after it.
+    Workflow: Iterate in small steps. Avoid full rewrites. Ask for approval before changing architecture, DB engine, or security models.
 
-## Verification
 
-Run all applicable checks before considering a task complete.
+11. Legacy Refactoring & Agent Workflow
 
-Preferred commands:
+    Legacy Context: The repo is migrating away from an old flow (UI ➔ Backend ➔ History). Do not preserve obsolete calls. Remove them. Backend must no longer orchestrate persistence, and UI must not call Backend directly.
 
-ruff check .
-ruff format --check .
-pytest
+    Agent Task Workflow:
 
-If configured:
+        Analyze: Read this file, inspect relevant code, tests, and contracts.
 
-mypy services
+        Plan: Propose a short implementation plan before editing.
 
-For History Service:
+        Implement: Make the smallest coherent change. Do not do a single massive rewrite of all services.
 
-alembic upgrade head
-alembic check
+        Test & Verify: Add/update tests. Run checks (pytest, ruff, etc.). Review diffs for unrelated changes.
 
-Never claim tests passed unless they were executed.
-
-## Workflow for implementation tasks
-
-Before editing:
-- Read this file.
-- Read the relevant service code.
-- Read the related documentation and tests.
-- Summarize the intended change.
-- Identify affected service boundaries.
-
-For a non-trivial task:
-- Propose a short implementation plan.
-- Implement the smallest coherent change.
-- Add or update tests.
-- Run relevant checks.
-- Review the diff for unrelated changes.
-- Update documentation where required.
-
-Ask before changing:
-- architecture
-- public APIs
-- database engine
-- service boundaries
-- security model
-- infrastructure

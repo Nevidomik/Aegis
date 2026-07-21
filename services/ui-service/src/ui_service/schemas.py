@@ -1,4 +1,4 @@
-"""UI-owned models for the Backend public contract."""
+"""UI-owned models for History Service's application contract."""
 
 from datetime import datetime
 from ipaddress import ip_address
@@ -75,7 +75,7 @@ class CheckResult(BaseModel):
 
 
 class HistoryPage(BaseModel):
-    """Recent persisted checks returned by Backend."""
+    """Recent persisted checks returned by History Service."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -91,11 +91,11 @@ class ReadinessResponse(BaseModel):
     status: Literal["ready"]
 
 
-class BackendErrorDetail(BaseModel):
+class ApplicationErrorDetail(BaseModel):
     code: StrictStr = Field(min_length=1, max_length=64)
     message: StrictStr = Field(min_length=1, max_length=500)
     request_id: StrictStr = Field(min_length=1, max_length=36)
 
 
-class BackendErrorResponse(BaseModel):
-    error: BackendErrorDetail
+class ApplicationErrorResponse(BaseModel):
+    error: ApplicationErrorDetail

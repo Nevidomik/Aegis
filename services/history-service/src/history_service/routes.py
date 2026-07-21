@@ -4,15 +4,18 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from history_service.backend_client import BackendClient, get_backend_client
 from history_service.database import get_session
+from history_service.exceptions import ApplicationError
 from history_service.schemas import (
+    ApplicationCheckRequest,
     CheckCreate,
     ErrorDetail,
     ErrorResponse,
@@ -21,9 +24,11 @@ from history_service.schemas import (
     HistoryRecord,
 )
 from history_service.service import (
+    ApplicationService,
     HistoryService,
     HistoryUnavailableError,
     IdempotencyConflictError,
+    get_application_service,
     get_history_service,
 )
 
@@ -90,6 +95,79 @@ def readiness(
             content={"status": "not ready"},
         )
     return {"status": "ready"}
+
+
+@router.post(
+    "/api/v1/checks",
+    response_model=HistoryRecord,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+    },
+    tags=["checks"],
+)
+def create_application_check(
+    payload: ApplicationCheckRequest,
+    request: Request,
+    response: Response,
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+    backend: Annotated[BackendClient, Depends(get_backend_client)],
+) -> HistoryRecord:
+    """Validate, resolve idempotency, call Backend, and persist one result."""
+    result = service.check(session, payload, request.state.request_id, backend)
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+    return HistoryRecord.from_record(result.record)
+
+
+@router.get(
+    "/api/v1/checks",
+    response_model=HistoryList,
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["checks"],
+)
+def list_application_checks(
+    query: Annotated[HistoryListQuery, Query()],
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> HistoryList:
+    result, normalized_query = service.list(session, query)
+    return HistoryList(
+        items=[HistoryRecord.from_record(record) for record in result.records],
+        limit=normalized_query.limit,
+        offset=normalized_query.offset,
+        total=result.total,
+    )
+
+
+@router.get(
+    "/api/v1/checks/{history_id}",
+    response_model=HistoryRecord,
+    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["checks"],
+)
+def get_application_check(
+    history_id: Annotated[int, Path(gt=0)],
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[HistoryService, Depends(get_history_service)],
+) -> HistoryRecord | JSONResponse:
+    record = service.get(session, history_id)
+    if record is None:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="HISTORY_RECORD_NOT_FOUND",
+            message="The requested history record does not exist.",
+            request_id=request_id_from(request),
+        )
+    return HistoryRecord.from_record(record)
 
 
 @router.post(
@@ -165,14 +243,31 @@ async def validation_exception_handler(
     )
 
 
+async def application_exception_handler(
+    request: Request, error: ApplicationError
+) -> JSONResponse:
+    """Return safe application and dependency failures."""
+    return error_response(
+        status_code=error.status_code,
+        code=error.code,
+        message=error.message,
+        request_id=request_id_from(request),
+    )
+
+
 async def unavailable_exception_handler(
     request: Request, _: HistoryUnavailableError
 ) -> JSONResponse:
     """Hide database error details from callers."""
+    is_internal = request.url.path.startswith("/internal/")
     return error_response(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        code="HISTORY_UNAVAILABLE",
-        message="History storage is temporarily unavailable.",
+        code="HISTORY_UNAVAILABLE" if is_internal else "DATABASE_UNAVAILABLE",
+        message=(
+            "History storage is temporarily unavailable."
+            if is_internal
+            else "The database is temporarily unavailable."
+        ),
         request_id=request_id_from(request),
     )
 
@@ -184,6 +279,6 @@ async def idempotency_conflict_exception_handler(
     return error_response(
         status_code=status.HTTP_409_CONFLICT,
         code="IDEMPOTENCY_CONFLICT",
-        message="The request ID was already used with different check data.",
+        message="The request ID has already been used with different request data.",
         request_id=request_id_from(request),
     )

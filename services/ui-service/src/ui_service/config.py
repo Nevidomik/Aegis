@@ -18,8 +18,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    backend_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8001")
-    backend_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    history_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8002")
+    history_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
 
 @lru_cache

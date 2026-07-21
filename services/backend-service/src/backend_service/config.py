@@ -18,8 +18,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    history_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8002")
-    history_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     abuseipdb_base_url: AnyHttpUrl = AnyHttpUrl("https://api.abuseipdb.com")
     abuseipdb_api_key: SecretStr = Field(min_length=1)
     abuseipdb_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
