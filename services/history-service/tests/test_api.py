@@ -3,8 +3,10 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from fastapi import Request
 from history_service.exceptions import ProviderServiceUnavailableError
 from history_service.provider_client import get_provider_client
+from history_service.routes import unexpected_exception_handler
 from history_service.schemas import HistoryListQuery
 from history_service.service import (
     ApplicationService,
@@ -18,6 +20,24 @@ from httpx2 import AsyncClient
 from sqlalchemy.exc import SQLAlchemyError
 
 from .conftest import check_payload, history_record
+
+DATABASE_SECRET = "TEST_DATABASE_PASSWORD_DO_NOT_LOG"
+
+
+@pytest.mark.anyio
+async def test_unexpected_error_response_hides_database_secret(caplog) -> None:
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/api/v1/checks", "headers": []}
+    )
+    request.state.request_id = UUID(int=1)
+
+    response = await unexpected_exception_handler(
+        request, RuntimeError(f"password={DATABASE_SECRET}")
+    )
+
+    assert response.status_code == 500
+    assert DATABASE_SECRET not in bytes(response.body).decode()
+    assert DATABASE_SECRET not in caplog.text
 
 
 class FakeHistoryService:
@@ -49,15 +69,16 @@ async def test_readiness_executes_database_check(
 
 @pytest.mark.anyio
 async def test_readiness_reports_database_failure(
-    client: AsyncClient, session: Mock
+    client: AsyncClient, session: Mock, caplog
 ) -> None:
-    session.execute.side_effect = SQLAlchemyError("database details")
+    session.execute.side_effect = SQLAlchemyError(f"password={DATABASE_SECRET}")
 
     response = await client.get("/health/ready")
 
     assert response.status_code == 503
     assert response.json() == {"status": "not ready"}
-    assert "database details" not in response.text
+    assert DATABASE_SECRET not in response.text
+    assert DATABASE_SECRET not in caplog.text
 
 
 @pytest.mark.anyio

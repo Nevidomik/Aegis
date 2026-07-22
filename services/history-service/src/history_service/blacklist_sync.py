@@ -30,6 +30,7 @@ from history_service.schemas import (
     ProviderBlacklistRequest,
     ProviderBlacklistResponse,
 )
+from history_service.security_logging import safe_persisted_error_message
 
 SyncStatus = Literal[
     "succeeded", "duplicate", "rate_limited", "failed", "already_running"
@@ -103,29 +104,16 @@ SAFE_ERROR_MESSAGES = {
         "The provider rate limit prevented blacklist synchronization."
     ),
     "UPSTREAM_UNAVAILABLE": "The reputation provider was temporarily unavailable.",
-    "PROVIDER_UNAVAILABLE": "The reputation provider was temporarily unavailable.",
     "UPSTREAM_TIMEOUT": (
-        "The reputation provider timed out during blacklist synchronization."
-    ),
-    "PROVIDER_TIMEOUT": (
         "The reputation provider timed out during blacklist synchronization."
     ),
     "UPSTREAM_AUTHENTICATION_FAILED": (
         "The reputation provider rejected its credentials."
     ),
-    "PROVIDER_AUTHENTICATION_FAILED": (
-        "The reputation provider rejected its credentials."
-    ),
     "UPSTREAM_INVALID_RESPONSE": (
         "The reputation provider returned an invalid response."
     ),
-    "PROVIDER_INVALID_RESPONSE": (
-        "The reputation provider returned an invalid response."
-    ),
     "UPSTREAM_REQUEST_REJECTED": (
-        "The reputation provider rejected the blacklist request."
-    ),
-    "PROVIDER_REQUEST_REJECTED": (
         "The reputation provider rejected the blacklist request."
     ),
     "DATABASE_UNAVAILABLE": "Blacklist synchronization could not be saved.",
@@ -193,7 +181,7 @@ class BlacklistSyncService:
                 )
 
             if len(response.items) > 1000:
-                error = ApplicationError(
+                validation_error = ApplicationError(
                     status_code=502,
                     code="PROVIDER_SERVICE_INVALID_RESPONSE",
                     message="Provider Service returned an invalid blacklist response.",
@@ -202,7 +190,7 @@ class BlacklistSyncService:
                     request_id=request_id,
                     sync_run_id=sync_run_id,
                     started_at=started_at,
-                    error=error,
+                    error=validation_error,
                 )
             return self._persist_response(
                 request_id=request_id,
@@ -241,6 +229,7 @@ class BlacklistSyncService:
             finished_at,
             remaining=response.rate_limit.remaining,
             reset_at=response.rate_limit.reset_at,
+            retry_after_seconds=response.rate_limit.retry_after_seconds,
             jitter_seconds=self._jitter(),
         )
         with self.session_factory() as session:
@@ -369,8 +358,10 @@ class BlacklistSyncService:
                 )
                 run.next_attempt_reason = decision.reason
                 run.error_code = error.code
-                run.error_message = SAFE_ERROR_MESSAGES.get(
-                    error.code, "Blacklist synchronization failed."
+                run.error_message = safe_persisted_error_message(
+                    SAFE_ERROR_MESSAGES.get(
+                        error.code, "Blacklist synchronization failed."
+                    )
                 )
                 session.commit()
             except SQLAlchemyError as database_error:
@@ -409,7 +400,9 @@ class BlacklistSyncService:
                 )
                 run.next_attempt_reason = decision.reason
                 run.error_code = "DATABASE_UNAVAILABLE"
-                run.error_message = SAFE_ERROR_MESSAGES["DATABASE_UNAVAILABLE"]
+                run.error_message = safe_persisted_error_message(
+                    SAFE_ERROR_MESSAGES["DATABASE_UNAVAILABLE"]
+                )
                 session.commit()
             except SQLAlchemyError as finalization_error:
                 session.rollback()

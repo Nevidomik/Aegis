@@ -4,10 +4,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Protocol, cast
 
 import httpx
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from starlette.types import ExceptionHandler
 
 from history_service.blacklist_scheduler import BlacklistScheduler
 from history_service.blacklist_sync import create_blacklist_sync_service
@@ -21,19 +23,31 @@ from history_service.routes import (
     request_id_middleware,
     router,
     unavailable_exception_handler,
+    unexpected_exception_handler,
     validation_exception_handler,
 )
 from history_service.service import HistoryUnavailableError, IdempotencyConflictError
 
 logger = logging.getLogger(__name__)
-SchedulerFactory = Callable[[Settings, ProviderClient], BlacklistScheduler]
+
+
+class Scheduler(Protocol):
+    async def run(self, stop_event: asyncio.Event) -> None: ...
+
+
+SchedulerFactory = Callable[[Settings, ProviderClient], Scheduler]
 
 
 def create_provider_http_client(settings: Settings) -> httpx.Client:
     """Create History's reusable client for the internal Provider API."""
     return httpx.Client(
         base_url=str(settings.provider_service_url).rstrip("/"),
-        timeout=settings.provider_timeout_seconds,
+        timeout=httpx.Timeout(
+            connect=settings.provider_connect_timeout_seconds,
+            read=settings.provider_read_timeout_seconds,
+            write=settings.provider_write_timeout_seconds,
+            pool=settings.provider_pool_timeout_seconds,
+        ),
         follow_redirects=False,
     )
 
@@ -46,6 +60,7 @@ def create_blacklist_scheduler(
         sync_service=create_blacklist_sync_service(settings),
         provider=provider,
         session_factory=get_session_factory(),
+        sync_deadline_seconds=settings.blacklist_sync_deadline_seconds,
     )
 
 
@@ -109,18 +124,24 @@ def create_app(
             async with managed_lifespan(application, configured, factory):
                 yield
 
-    application = FastAPI(title="Aegis History Service", lifespan=selected_lifespan)
+    application = FastAPI(
+        title="Aegis History Service", lifespan=selected_lifespan, debug=False
+    )
     application.middleware("http")(request_id_middleware)
-    application.add_exception_handler(ApplicationError, application_exception_handler)
     application.add_exception_handler(
-        RequestValidationError, validation_exception_handler
+        ApplicationError, cast(ExceptionHandler, application_exception_handler)
     )
     application.add_exception_handler(
-        HistoryUnavailableError, unavailable_exception_handler
+        RequestValidationError, cast(ExceptionHandler, validation_exception_handler)
     )
     application.add_exception_handler(
-        IdempotencyConflictError, idempotency_conflict_exception_handler
+        HistoryUnavailableError, cast(ExceptionHandler, unavailable_exception_handler)
     )
+    application.add_exception_handler(
+        IdempotencyConflictError,
+        cast(ExceptionHandler, idempotency_conflict_exception_handler),
+    )
+    application.add_exception_handler(Exception, unexpected_exception_handler)
     application.include_router(router)
     return application
 

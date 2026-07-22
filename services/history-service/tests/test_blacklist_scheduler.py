@@ -1,12 +1,23 @@
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from history_service.blacklist_repository import PersistedBlacklistSchedule
+from history_service.blacklist_policy import SchedulingReason
+from history_service.blacklist_repository import (
+    BlacklistRepository,
+    PersistedBlacklistSchedule,
+)
 from history_service.blacklist_scheduler import BlacklistScheduler
-from history_service.blacklist_sync import BlacklistSyncResult
+from history_service.blacklist_sync import (
+    BlacklistProviderGateway,
+    BlacklistSyncResult,
+    BlacklistSyncService,
+    SyncStatus,
+)
+from sqlalchemy.orm import Session
 
 NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 REQUEST_ID = UUID("6f5aa064-43e8-4dbb-a544-d60b68af5cbd")
@@ -67,19 +78,19 @@ async def inline_runner(function, *args):
 
 def result(
     *,
-    status: str = "succeeded",
+    status: SyncStatus = "succeeded",
     next_attempt_at: datetime | None = None,
-    reason: str | None = "base_interval",
+    reason: SchedulingReason | None = "base_interval",
 ) -> BlacklistSyncResult:
     return BlacklistSyncResult(
         request_id=REQUEST_ID,
         sync_run_id=1,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         snapshot_id=2 if status == "succeeded" else None,
         started_at=NOW,
         finished_at=NOW,
         next_attempt_at=next_attempt_at,
-        next_attempt_reason=reason,  # type: ignore[arg-type]
+        next_attempt_reason=reason,
         error_code=None,
     )
 
@@ -106,10 +117,10 @@ def scheduler(
     waiter: RecordingWaiter,
 ) -> BlacklistScheduler:
     return BlacklistScheduler(
-        sync_service=sync_service,  # type: ignore[arg-type]
-        provider=object(),  # type: ignore[arg-type]
-        session_factory=FakeSession,  # type: ignore[arg-type]
-        repository=repository,  # type: ignore[arg-type]
+        sync_service=cast(BlacklistSyncService, sync_service),
+        provider=cast(BlacklistProviderGateway, object()),
+        session_factory=cast(Callable[[], Session], FakeSession),
+        repository=cast(BlacklistRepository, repository),
         clock=lambda: NOW,
         runner=inline_runner,
         waiter=waiter,
@@ -203,11 +214,12 @@ async def test_graceful_shutdown_interrupts_wait() -> None:
     stop_event = asyncio.Event()
     scheduler_task = asyncio.create_task(
         BlacklistScheduler(
-            sync_service=FakeSyncService(result()),  # type: ignore[arg-type]
-            provider=object(),  # type: ignore[arg-type]
-            session_factory=FakeSession,  # type: ignore[arg-type]
-            repository=ScheduleRepository(  # type: ignore[arg-type]
-                [schedule(next_attempt_at=NOW + timedelta(days=1))]
+            sync_service=cast(BlacklistSyncService, FakeSyncService(result())),
+            provider=cast(BlacklistProviderGateway, object()),
+            session_factory=cast(Callable[[], Session], FakeSession),
+            repository=cast(
+                BlacklistRepository,
+                ScheduleRepository([schedule(next_attempt_at=NOW + timedelta(days=1))]),
             ),
             clock=lambda: NOW,
             runner=inline_runner,
@@ -224,11 +236,12 @@ async def test_graceful_shutdown_interrupts_wait() -> None:
 @pytest.mark.anyio
 async def test_cancellation_while_sleeping_is_not_swallowed() -> None:
     instance = BlacklistScheduler(
-        sync_service=FakeSyncService(result()),  # type: ignore[arg-type]
-        provider=object(),  # type: ignore[arg-type]
-        session_factory=FakeSession,  # type: ignore[arg-type]
-        repository=ScheduleRepository(  # type: ignore[arg-type]
-            [schedule(next_attempt_at=NOW + timedelta(days=1))]
+        sync_service=cast(BlacklistSyncService, FakeSyncService(result())),
+        provider=cast(BlacklistProviderGateway, object()),
+        session_factory=cast(Callable[[], Session], FakeSession),
+        repository=cast(
+            BlacklistRepository,
+            ScheduleRepository([schedule(next_attempt_at=NOW + timedelta(days=1))]),
         ),
         clock=lambda: NOW,
         runner=inline_runner,
@@ -239,3 +252,26 @@ async def test_cancellation_while_sleeping_is_not_swallowed() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.anyio
+async def test_synchronization_deadline_is_bounded_without_production_sleep() -> None:
+    async def blocked_runner(function, *args):
+        if function == instance._read_schedule:
+            return None
+        await asyncio.Event().wait()
+
+    waiter = RecordingWaiter()
+    instance = BlacklistScheduler(
+        sync_service=cast(BlacklistSyncService, FakeSyncService(result())),
+        provider=cast(BlacklistProviderGateway, object()),
+        session_factory=cast(Callable[[], Session], FakeSession),
+        repository=cast(BlacklistRepository, ScheduleRepository([None])),
+        runner=blocked_runner,
+        waiter=waiter,
+        sync_deadline_seconds=0.01,
+    )
+
+    await instance.run(asyncio.Event())
+
+    assert waiter.delays == [300]

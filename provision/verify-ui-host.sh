@@ -10,7 +10,8 @@ fi
 
 attempts=30
 while (( attempts > 0 )); do
-  if curl --fail --silent --show-error "${UI_URL}/health/live" >/dev/null 2>&1; then
+  if curl --fail --silent --show-error --connect-timeout 2 --max-time 3 \
+    "${UI_URL}/health/live" >/dev/null 2>&1; then
     echo "Host can reach ${UI_URL}"
     exit 0
   fi

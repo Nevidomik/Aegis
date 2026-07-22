@@ -4,26 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Aegis Blacklist</title>
-    <style>
-      :root { color-scheme: light; font-family: system-ui, sans-serif; line-height: 1.5; }
-      body { background: #f5f7fa; color: #17202a; margin: 0; }
-      main { margin: 2rem auto; max-width: 72rem; padding: 0 1rem; }
-      section { background: white; border: 1px solid #dce2e8; border-radius: 0.5rem; margin-bottom: 1.25rem; padding: 1.25rem; }
-      .error, .warning { padding: 0.75rem; }
-      .error { background: #fff0f0; border-left: 0.3rem solid #b42318; }
-      .warning { background: #fff8e6; border-left: 0.3rem solid #b7791f; }
-      dl { display: grid; grid-template-columns: 15rem 1fr; margin: 0; }
-      dt, dd { border-bottom: 1px solid #edf0f2; margin: 0; padding: 0.4rem; }
-      dt { font-weight: 600; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border-bottom: 1px solid #dce2e8; padding: 0.55rem; text-align: left; }
-      .table-wrap { overflow-x: auto; }
-      nav { display: flex; gap: 1rem; justify-content: space-between; }
-      @media (max-width: 44rem) {
-        dl { grid-template-columns: 1fr; }
-        dt { border-bottom: 0; padding-bottom: 0; }
-      }
-    </style>
+    <link rel="stylesheet" href="/static/blacklist.css">
   </head>
   <body>
     <main>
@@ -78,6 +59,188 @@
             <dt>Fetched at</dt><dd>{{ blacklist.snapshot.fetched_at }}</dd>
             <dt>Minimum confidence</dt><dd>{{ blacklist.snapshot.confidence_minimum }}%</dd>
           </dl>
+        </section>
+
+        <section aria-labelledby="analytics-heading">
+          <h2 id="analytics-heading">Snapshot analytics</h2>
+          {% if analytics_error %}
+            <p class="warning" role="status">{{ analytics_error }}</p>
+            <p>The blacklist entries remain available below.</p>
+          {% elif analytics and analytics.latest_snapshot %}
+            <p class="notice">
+              These summaries describe the retained provider result set above the configured confidence threshold, not the provider's complete blacklist or global abuse prevalence.
+            </p>
+            {% if analytics.latest_snapshot.result_limit_reached %}
+              <p class="warning" role="status">
+                The {{ analytics.latest_snapshot.requested_limit }}-entry result limit was reached. Additional matching entries may exist, so distributions and snapshot changes may be affected by truncation.
+              </p>
+            {% endif %}
+
+            <div class="analytics-summary" aria-label="Latest snapshot analytics summary">
+              <div class="summary-card">
+                <span>Retained entries</span>
+                <strong>{{ analytics.latest_snapshot.returned_count }}</strong>
+              </div>
+              <div class="summary-card">
+                <span>Confidence threshold</span>
+                <strong>{{ analytics.latest_snapshot.confidence_minimum }}%</strong>
+              </div>
+              {% for item in analytics.ip_versions %}
+                <div class="summary-card">
+                  <span>IPv{{ item.ip_version }} entries</span>
+                  <strong>{{ item.count }}</strong>
+                </div>
+              {% endfor %}
+            </div>
+
+            {% if analytics.latest_snapshot.returned_count > 0 %}
+              <div class="chart-grid">
+                <figure class="chart-card" aria-labelledby="score-chart-heading">
+                  <h3 id="score-chart-heading">Abuse confidence scores</h3>
+                  <figcaption>Entry counts in fixed score ranges.</figcaption>
+                  <ul class="bar-list" aria-label="Abuse confidence score distribution">
+                    {% for bucket in analytics.score_distribution %}
+                      <li>
+                        <span>{% if bucket.minimum == bucket.maximum %}{{ bucket.minimum }}{% else %}{{ bucket.minimum }}–{{ bucket.maximum }}{% endif %}</span>
+                        <meter min="0" max="{{ analytics.latest_snapshot.returned_count }}" value="{{ bucket.count }}" aria-label="Score {{ bucket.minimum }} to {{ bucket.maximum }}: {{ bucket.count }} entries"></meter>
+                        <span class="chart-count">{{ bucket.count }}</span>
+                      </li>
+                    {% endfor %}
+                  </ul>
+                  <details>
+                    <summary>View score data table</summary>
+                    <div class="table-wrap">
+                      <table>
+                        <caption>Abuse confidence score distribution</caption>
+                        <thead><tr><th scope="col">Score range</th><th scope="col">Entries</th></tr></thead>
+                        <tbody>
+                          {% for bucket in analytics.score_distribution %}
+                            <tr><th scope="row">{{ bucket.minimum }}–{{ bucket.maximum }}</th><td>{{ bucket.count }}</td></tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </figure>
+
+                <figure class="chart-card" aria-labelledby="country-chart-heading">
+                  <h3 id="country-chart-heading">Top countries</h3>
+                  <figcaption>Provider-reported country metadata, not attacker location.</figcaption>
+                  <ul class="bar-list" aria-label="Top country distribution">
+                    {% for item in analytics.top_countries.items %}
+                      <li>
+                        <span>{{ item.country_code }}</span>
+                        <meter min="0" max="{{ analytics.latest_snapshot.returned_count }}" value="{{ item.count }}" aria-label="{{ item.country_code }}: {{ item.count }} entries"></meter>
+                        <span class="chart-count">{{ item.count }}</span>
+                      </li>
+                    {% endfor %}
+                    <li>
+                      <span>Unknown</span>
+                      <meter min="0" max="{{ analytics.latest_snapshot.returned_count }}" value="{{ analytics.top_countries.unknown_count }}" aria-label="Unknown country: {{ analytics.top_countries.unknown_count }} entries"></meter>
+                      <span class="chart-count">{{ analytics.top_countries.unknown_count }}</span>
+                    </li>
+                    <li>
+                      <span>Other</span>
+                      <meter min="0" max="{{ analytics.latest_snapshot.returned_count }}" value="{{ analytics.top_countries.other_count }}" aria-label="Other countries: {{ analytics.top_countries.other_count }} entries"></meter>
+                      <span class="chart-count">{{ analytics.top_countries.other_count }}</span>
+                    </li>
+                  </ul>
+                  <details>
+                    <summary>View country data table</summary>
+                    <div class="table-wrap">
+                      <table>
+                        <caption>Top provider-reported countries</caption>
+                        <thead><tr><th scope="col">Country group</th><th scope="col">Entries</th></tr></thead>
+                        <tbody>
+                          {% for item in analytics.top_countries.items %}
+                            <tr><th scope="row">{{ item.country_code }}</th><td>{{ item.count }}</td></tr>
+                          {% endfor %}
+                          <tr><th scope="row">Unknown</th><td>{{ analytics.top_countries.unknown_count }}</td></tr>
+                          <tr><th scope="row">Other</th><td>{{ analytics.top_countries.other_count }}</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </figure>
+
+                <figure class="chart-card" aria-labelledby="ip-chart-heading">
+                  <h3 id="ip-chart-heading">IP version composition</h3>
+                  <figcaption>Retained IPv4 and IPv6 entry counts.</figcaption>
+                  <ul class="bar-list" aria-label="IP version composition">
+                    {% for item in analytics.ip_versions %}
+                      <li>
+                        <span>IPv{{ item.ip_version }}</span>
+                        <meter min="0" max="{{ analytics.latest_snapshot.returned_count }}" value="{{ item.count }}" aria-label="IPv{{ item.ip_version }}: {{ item.count }} entries"></meter>
+                        <span class="chart-count">{{ item.count }}</span>
+                      </li>
+                    {% endfor %}
+                  </ul>
+                  <details>
+                    <summary>View IP version data table</summary>
+                    <div class="table-wrap">
+                      <table>
+                        <caption>IP version composition</caption>
+                        <thead><tr><th scope="col">Version</th><th scope="col">Entries</th></tr></thead>
+                        <tbody>
+                          {% for item in analytics.ip_versions %}
+                            <tr><th scope="row">IPv{{ item.ip_version }}</th><td>{{ item.count }}</td></tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </figure>
+              </div>
+            {% else %}
+              <p>The latest snapshot contains no entries to chart.</p>
+            {% endif %}
+
+            <div class="chart-card" aria-labelledby="churn-heading">
+              <h3 id="churn-heading">Snapshot changes</h3>
+              {% if analytics.snapshot_churn %}
+                <p>Added, removed, and retained describe membership changes in adjacent retained result sets. They do not prove that an address became or ceased to be abusive.</p>
+                <div class="churn-pairs" aria-label="Recent snapshot change charts">
+                  {% for pair in analytics.snapshot_churn %}
+                    <div class="churn-pair">
+                      <h4>Snapshot {{ pair.previous_snapshot_id }} to {{ pair.current_snapshot_id }}</h4>
+                      <ul class="bar-list">
+                        <li><span>Added</span><meter min="0" max="1000" value="{{ pair.added }}" aria-label="{{ pair.added }} added entries"></meter><span class="chart-count">{{ pair.added }}</span></li>
+                        <li><span>Removed</span><meter min="0" max="1000" value="{{ pair.removed }}" aria-label="{{ pair.removed }} removed entries"></meter><span class="chart-count">{{ pair.removed }}</span></li>
+                        <li><span>Retained</span><meter min="0" max="1000" value="{{ pair.retained }}" aria-label="{{ pair.retained }} retained entries"></meter><span class="chart-count">{{ pair.retained }}</span></li>
+                      </ul>
+                    </div>
+                  {% endfor %}
+                </div>
+                <div class="table-wrap">
+                  <table class="churn-table">
+                    <caption>Changes between recent accepted snapshot pairs, newest first</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Snapshot pair</th>
+                        <th scope="col">Added</th>
+                        <th scope="col">Removed</th>
+                        <th scope="col">Retained</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for pair in analytics.snapshot_churn %}
+                        <tr>
+                          <th scope="row">{{ pair.previous_snapshot_id }} → {{ pair.current_snapshot_id }}</th>
+                          <td>{{ pair.added }}</td>
+                          <td>{{ pair.removed }}</td>
+                          <td>{{ pair.retained }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <p>Snapshot change history will appear after a second accepted snapshot.</p>
+              {% endif %}
+            </div>
+          {% else %}
+            <p>No snapshot analytics are available yet.</p>
+          {% endif %}
         </section>
 
         <section aria-labelledby="entries-heading">

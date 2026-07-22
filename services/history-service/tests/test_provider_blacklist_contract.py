@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import Any, cast
 
 import pytest
 from history_service.schemas import (
@@ -51,7 +52,7 @@ def test_provider_error_contract_accepts_only_normalized_retry_metadata() -> Non
     assert result.error.retry is not None
     assert result.error.retry.retry_after_seconds == 60
 
-    invalid = deepcopy(payload)
+    invalid = cast(dict[str, Any], deepcopy(payload))
     invalid["error"]["retry"]["raw_header"] = "unexpected"
     with pytest.raises(ValidationError):
         ProviderErrorResponse.model_validate(invalid)

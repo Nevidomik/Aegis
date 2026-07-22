@@ -291,6 +291,113 @@ exists, the response may include a safe application-level error summary:
 The status response must not expose stack traces, credentials, internal URLs,
 SQL details, or raw provider bodies.
 
+### Get blacklist analytics
+
+```http
+GET /api/v1/blacklist/analytics?pair_limit=10
+```
+
+This endpoint reads only accepted blacklist snapshots and entries persisted in
+MariaDB. It must not call Provider Service, trigger synchronization, or read
+the legacy manual-check table.
+
+Query rules:
+
+- `pair_limit` defaults to 10;
+- `pair_limit` must be between 1 and 30;
+- the limit bounds adjacent accepted-snapshot pairs used for churn;
+- latest-snapshot distributions are aggregated by History Service and the
+  browser must not download complete snapshots to calculate them.
+
+Success with persisted snapshots:
+
+```json
+{
+  "latest_snapshot": {
+    "snapshot_id": 42,
+    "provider_generated_at": "2026-07-22T12:00:00Z",
+    "confidence_minimum": 90,
+    "requested_limit": 1000,
+    "returned_count": 1000,
+    "result_limit_reached": true
+  },
+  "score_distribution": [
+    {"minimum": 0, "maximum": 9, "count": 0},
+    {"minimum": 10, "maximum": 19, "count": 0},
+    {"minimum": 20, "maximum": 29, "count": 0},
+    {"minimum": 30, "maximum": 39, "count": 0},
+    {"minimum": 40, "maximum": 49, "count": 0},
+    {"minimum": 50, "maximum": 59, "count": 0},
+    {"minimum": 60, "maximum": 69, "count": 0},
+    {"minimum": 70, "maximum": 79, "count": 0},
+    {"minimum": 80, "maximum": 89, "count": 0},
+    {"minimum": 90, "maximum": 94, "count": 160},
+    {"minimum": 95, "maximum": 99, "count": 340},
+    {"minimum": 100, "maximum": 100, "count": 500}
+  ],
+  "top_countries": {
+    "items": [
+      {"country_code": "US", "count": 180},
+      {"country_code": "CN", "count": 130}
+    ],
+    "unknown_count": 45,
+    "other_count": 645
+  },
+  "ip_versions": [
+    {"ip_version": 4, "count": 920},
+    {"ip_version": 6, "count": 80}
+  ],
+  "snapshot_churn": [
+    {
+      "current_snapshot_id": 42,
+      "previous_snapshot_id": 41,
+      "added": 120,
+      "removed": 95,
+      "retained": 880
+    }
+  ]
+}
+```
+
+The score response always uses deterministic ascending buckets:
+`0-9`, `10-19`, through `80-89`, followed by `90-94`, `95-99`, and
+`100`. Missing buckets have count zero. Country items contain the five largest
+known country groups ordered by descending count and then ascending country
+code. Missing country metadata is counted by `unknown_count`; all remaining
+known country groups are counted by `other_count`. IP versions are ordered as
+IPv4 then IPv6 and include zero counts.
+
+Churn compares IP membership in adjacent accepted snapshots. Pairs are ordered
+from newest to oldest. `added` means present only in the current retained
+snapshot, `removed` means present only in the previous retained snapshot, and
+`retained` means present in both. With only one snapshot, `snapshot_churn` is
+empty.
+
+Success with no accepted snapshot:
+
+```json
+{
+  "latest_snapshot": null,
+  "score_distribution": [],
+  "top_countries": {
+    "items": [],
+    "unknown_count": 0,
+    "other_count": 0
+  },
+  "ip_versions": [],
+  "snapshot_churn": []
+}
+```
+
+Analytics describe retained provider result sets above the configured
+confidence threshold, not the provider's complete blacklist or global abuse
+prevalence. A snapshot is limited to 1000 entries. When
+`result_limit_reached` is true, additional matching provider entries may have
+existed. Top-country, score, IP-version, and churn values can therefore be
+affected by result ranking and truncation. Churn may also reflect changes to
+the configured confidence threshold or request limit; it must not be described
+as proof that an address became or ceased to be abusive.
+
 ### Get latest blacklist snapshot
 
 ```http
@@ -600,6 +707,9 @@ Field rules:
 - `generated_at` is the provider snapshot generation time;
 - `fetched_at` is the local Provider Service completion time;
 - `rate_limit` fields may be `null` when the corresponding header is absent;
+- malformed, negative, out-of-range, or contradictory rate-limit header values
+  are ignored individually and represented as `null` rather than invalidating
+  an otherwise valid provider response;
 - `items` contains no more than 1000 entries;
 - `ip_address` uses canonical compressed representation;
 - `ip_version` is derived from the normalized address;
@@ -703,20 +813,34 @@ After a successful request with remaining quota:
 next_attempt_at = synchronization_finished_at + configured_interval
 ```
 
-When `rate_limit.remaining` is zero:
+When `rate_limit.remaining` is zero, every valid rate-limit timestamp is a
+not-before constraint:
 
 ```text
 next_attempt_at = max(
     synchronization_finished_at + configured_interval,
-    rate_limit.reset_at
+    synchronization_finished_at + retry_after_seconds, when present,
+    rate_limit.reset_at, when present
 ) + jitter
 ```
 
-After HTTP 429, retry timing priority is:
+After HTTP 429, `Retry-After` and the rate-limit reset time are both
+not-before constraints. The later valid constraint wins; one must never bypass
+the other:
 
-1. `Retry-After`;
-2. rate-limit reset time;
-3. conservative fallback interval.
+```text
+next_attempt_at = max(
+    synchronization_finished_at,
+    synchronization_finished_at + retry_after_seconds, when present,
+    rate_limit.reset_at, when present
+) + jitter
+```
+
+When neither constraint is valid or present, History Service uses the
+conservative fallback interval. Past reset timestamps are clamped to the
+synchronization completion time. A successful response with remaining quota
+greater than zero follows the configured normal interval even if informational
+rate-limit timestamps are present.
 
 A known rate-limit reset time must not be bypassed by exponential backoff.
 

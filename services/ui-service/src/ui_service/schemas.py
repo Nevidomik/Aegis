@@ -207,6 +207,114 @@ class BlacklistPage(BaseModel):
     total: StrictInt = Field(ge=0, le=MAX_COUNT)
 
 
+class BlacklistAnalyticsSnapshot(BaseModel):
+    """Latest accepted snapshot represented by History analytics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: StrictInt = Field(gt=0)
+    provider_generated_at: datetime
+    confidence_minimum: StrictInt = Field(ge=0, le=100)
+    requested_limit: StrictInt = Field(ge=1, le=1000)
+    returned_count: StrictInt = Field(ge=0, le=1000)
+    result_limit_reached: StrictBool
+
+    @field_validator("provider_generated_at")
+    @classmethod
+    def validate_generated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Timestamps must include a timezone.")
+        return value
+
+
+class BlacklistScoreBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    minimum: StrictInt = Field(ge=0, le=100)
+    maximum: StrictInt = Field(ge=0, le=100)
+    count: StrictInt = Field(ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> Self:
+        if self.maximum < self.minimum:
+            raise ValueError("Score bucket maximum cannot be below its minimum.")
+        return self
+
+
+class BlacklistCountryCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country_code: StrictStr = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistCountryDistribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BlacklistCountryCount] = Field(max_length=10)
+    unknown_count: StrictInt = Field(ge=0, le=1000)
+    other_count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistIpVersionCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ip_version: Literal[4, 6]
+    count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistSnapshotChurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_snapshot_id: StrictInt = Field(gt=0)
+    previous_snapshot_id: StrictInt = Field(gt=0)
+    added: StrictInt = Field(ge=0, le=1000)
+    removed: StrictInt = Field(ge=0, le=1000)
+    retained: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistAnalytics(BaseModel):
+    """Strict UI boundary for database-derived blacklist analytics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latest_snapshot: BlacklistAnalyticsSnapshot | None
+    score_distribution: list[BlacklistScoreBucket] = Field(max_length=12)
+    top_countries: BlacklistCountryDistribution
+    ip_versions: list[BlacklistIpVersionCount] = Field(max_length=2)
+    snapshot_churn: list[BlacklistSnapshotChurn] = Field(max_length=30)
+
+    @model_validator(mode="after")
+    def validate_totals_and_ordering(self) -> Self:
+        if self.latest_snapshot is None:
+            if (
+                self.score_distribution
+                or self.top_countries.items
+                or self.top_countries.unknown_count
+                or self.top_countries.other_count
+                or self.ip_versions
+                or self.snapshot_churn
+            ):
+                raise ValueError("Empty analytics cannot contain snapshot data.")
+            return self
+
+        expected = self.latest_snapshot.returned_count
+        if sum(item.count for item in self.score_distribution) != expected:
+            raise ValueError("Score distribution does not match the snapshot.")
+        if (
+            sum(item.count for item in self.top_countries.items)
+            + self.top_countries.unknown_count
+            + self.top_countries.other_count
+            != expected
+        ):
+            raise ValueError("Country distribution does not match the snapshot.")
+        if sum(item.count for item in self.ip_versions) != expected:
+            raise ValueError("IP version distribution does not match the snapshot.")
+        if [item.ip_version for item in self.ip_versions] != [4, 6]:
+            raise ValueError("IP version analytics must be ordered as IPv4 and IPv6.")
+        return self
+
+
 class ReadinessResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

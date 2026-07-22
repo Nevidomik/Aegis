@@ -16,7 +16,11 @@ The UI loads that file explicitly regardless of the current working directory:
 
 ```dotenv
 HISTORY_SERVICE_URL=http://127.0.0.1:8002
-HISTORY_TIMEOUT_SECONDS=5
+HISTORY_CONNECT_TIMEOUT_SECONDS=3
+HISTORY_READ_TIMEOUT_SECONDS=5
+HISTORY_WRITE_TIMEOUT_SECONDS=5
+HISTORY_POOL_TIMEOUT_SECONDS=3
+HISTORY_OPERATION_TIMEOUT_SECONDS=10
 ```
 
 Install the locked workspace and run from the repository root:

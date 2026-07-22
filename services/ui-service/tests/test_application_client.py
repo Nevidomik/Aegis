@@ -1,11 +1,33 @@
+import asyncio
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 from ui_service.application_client import ApplicationClient, ApplicationClientError
-from ui_service.schemas import BlacklistPage, BlacklistStatus, CheckResult
+from ui_service.schemas import (
+    BlacklistAnalytics,
+    BlacklistPage,
+    BlacklistStatus,
+    CheckResult,
+)
 
 REQUEST_ID = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
+
+
+@pytest.mark.anyio
+async def test_total_operation_timeout_maps_to_safe_unavailable_error() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async with httpx.AsyncClient(
+        base_url="http://history.test",
+        transport=httpx.MockTransport(handler),
+        timeout=httpx.Timeout(connect=1, read=1, write=1, pool=1),
+    ) as http_client:
+        client = ApplicationClient(http_client, operation_timeout_seconds=0.01)
+        with pytest.raises(ApplicationClientError, match="unavailable"):
+            await client.ready(request_id=REQUEST_ID)
 
 
 def valid_result() -> dict[str, object]:
@@ -140,6 +162,28 @@ async def test_client_calls_history_blacklist_endpoints() -> None:
                 "data_stale": False,
                 "last_error": None,
             }
+        elif request.url.path.endswith("/analytics"):
+            body = {
+                "latest_snapshot": {
+                    "snapshot_id": 42,
+                    "provider_generated_at": "2026-07-22T12:00:00Z",
+                    "confidence_minimum": 90,
+                    "requested_limit": 1000,
+                    "returned_count": 1,
+                    "result_limit_reached": False,
+                },
+                "score_distribution": [{"minimum": 95, "maximum": 99, "count": 1}],
+                "top_countries": {
+                    "items": [{"country_code": "US", "count": 1}],
+                    "unknown_count": 0,
+                    "other_count": 0,
+                },
+                "ip_versions": [
+                    {"ip_version": 4, "count": 1},
+                    {"ip_version": 6, "count": 0},
+                ],
+                "snapshot_churn": [],
+            }
         else:
             body = {
                 "snapshot": {
@@ -172,12 +216,55 @@ async def test_client_calls_history_blacklist_endpoints() -> None:
         client = ApplicationClient(http_client)
         status = await client.blacklist_status(request_id=REQUEST_ID)
         page = await client.blacklist(limit=100, offset=100, request_id=REQUEST_ID)
+        analytics = await client.blacklist_analytics(
+            pair_limit=10, request_id=REQUEST_ID
+        )
 
     assert isinstance(status, BlacklistStatus)
     assert isinstance(page, BlacklistPage)
+    assert isinstance(analytics, BlacklistAnalytics)
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/api/v1/blacklist/status"),
         ("GET", "/api/v1/blacklist"),
+        ("GET", "/api/v1/blacklist/analytics"),
     ]
     assert dict(requests[1].url.params) == {"limit": "100", "offset": "100"}
+    assert dict(requests[2].url.params) == {"pair_limit": "10"}
     assert all(request.headers["X-Request-ID"] == REQUEST_ID for request in requests)
+
+
+@pytest.mark.anyio
+async def test_client_rejects_invalid_blacklist_analytics_contract() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "latest_snapshot": {
+                    "snapshot_id": 42,
+                    "provider_generated_at": "2026-07-22T12:00:00Z",
+                    "confidence_minimum": 90,
+                    "requested_limit": 1000,
+                    "returned_count": 1,
+                    "result_limit_reached": False,
+                },
+                "score_distribution": [{"minimum": 95, "maximum": 99, "count": 1}],
+                "top_countries": {
+                    "items": [{"country_code": "US", "count": 1}],
+                    "unknown_count": 0,
+                    "other_count": 0,
+                },
+                "ip_versions": [
+                    {"ip_version": 6, "count": 0},
+                    {"ip_version": 4, "count": 1},
+                ],
+                "snapshot_churn": [],
+            },
+            headers={"X-Request-ID": REQUEST_ID},
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://history.test", transport=httpx.MockTransport(handler)
+    ) as http_client:
+        client = ApplicationClient(http_client)
+        with pytest.raises(ApplicationClientError, match="invalid response"):
+            await client.blacklist_analytics(pair_limit=10, request_id=REQUEST_ID)

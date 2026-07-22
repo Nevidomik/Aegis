@@ -185,3 +185,64 @@ def test_sync_run_relationship_and_timestamp_normalization() -> None:
     assert run.finished_at == FETCHED_AT.replace(tzinfo=None)
     session.add.assert_called_once_with(run)
     session.flush.assert_called_once_with()
+
+
+def test_latest_snapshot_analytics_use_grouped_deterministic_queries() -> None:
+    repository = BlacklistRepository()
+
+    score_session = Mock(spec=Session)
+    score_session.execute.return_value = [(90, 2), (95, 3), (100, 4)]
+    scores = repository.score_distribution(score_session, snapshot_id=42)
+    score_statement = score_session.execute.call_args.args[0]
+    assert [(item.minimum, item.count) for item in scores] == [
+        (90, 2),
+        (95, 3),
+        (100, 4),
+    ]
+    assert "GROUP BY" in str(score_statement)
+    assert "ORDER BY bucket_minimum ASC" in str(score_statement)
+
+    country_session = Mock(spec=Session)
+    country_session.execute.return_value = [("US", 5), (None, 2), ("CA", 1)]
+    countries = repository.country_distribution(country_session, snapshot_id=42)
+    country_sql = str(country_session.execute.call_args.args[0])
+    assert [(item.country_code, item.count) for item in countries] == [
+        ("US", 5),
+        (None, 2),
+        ("CA", 1),
+    ]
+    assert "GROUP BY" in country_sql
+    assert "count(*) DESC" in country_sql
+    assert "country_code ASC" in country_sql
+
+    version_session = Mock(spec=Session)
+    version_session.execute.return_value = [(4, 8), (6, 2)]
+    versions = repository.ip_version_distribution(version_session, snapshot_id=42)
+    version_sql = str(version_session.execute.call_args.args[0])
+    assert [(item.ip_version, item.count) for item in versions] == [(4, 8), (6, 2)]
+    assert "GROUP BY" in version_sql
+    assert "ip_version ASC" in version_sql
+
+
+def test_snapshot_churn_is_one_bounded_set_query_for_all_pairs() -> None:
+    session = Mock(spec=Session)
+    session.execute.return_value = [
+        (43, 42, 2, 1, 998),
+        (42, 41, 3, 4, 997),
+    ]
+
+    result = BlacklistRepository().snapshot_churn(
+        session, provider="AbuseIPDB", pair_limit=2
+    )
+
+    assert [item.current_snapshot_id for item in result] == [43, 42]
+    assert result[0].added == 2
+    assert result[0].removed == 1
+    assert result[0].retained == 998
+    session.execute.assert_called_once()
+    sql = str(session.execute.call_args.args[0])
+    assert "recent_analytics_snapshots" in sql
+    assert "analytics_snapshot_pairs" in sql
+    assert "lead(" in sql.lower()
+    assert "blacklist_snapshots.provider" in sql
+    assert "ORDER BY analytics_current_counts.current_snapshot_id DESC" in sql

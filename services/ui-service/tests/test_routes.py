@@ -1,10 +1,38 @@
 from uuid import UUID
 
 import pytest
+from fastapi import Request
 from httpx2 import AsyncClient
+from ui_service.routes import unexpected_exception_handler
 from ui_service.schemas import BlacklistLastError
 
 from .conftest import FakeApplicationClient
+
+API_SECRET = "TEST_ABUSEIPDB_SECRET_DO_NOT_LOG"
+
+
+@pytest.mark.anyio
+async def test_unexpected_error_response_hides_secret_and_correlates_request(
+    caplog,
+) -> None:
+    request_id = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [(b"x-request-id", request_id.encode())],
+        }
+    )
+
+    response = await unexpected_exception_handler(
+        request, RuntimeError(f"Cookie={API_SECRET}")
+    )
+
+    assert response.status_code == 500
+    assert response.headers["X-Request-ID"] == request_id
+    assert API_SECRET not in bytes(response.body).decode()
+    assert API_SECRET not in caplog.text
 
 
 @pytest.mark.anyio
@@ -152,6 +180,10 @@ async def test_blacklist_page_displays_ready_snapshot_with_ipv4_and_ipv6(
         "offset": 0,
         "request_id": request_id,
     }
+    assert application_client.blacklist_analytics_request == {
+        "pair_limit": 10,
+        "request_id": request_id,
+    }
 
 
 @pytest.mark.anyio
@@ -176,6 +208,7 @@ async def test_blacklist_page_displays_empty_state_without_loading_entries(
     assert "No successful blacklist snapshot is available yet." in response.text
     assert "Blacklist entries" not in response.text
     assert application_client.blacklist_request is None
+    assert application_client.blacklist_analytics_request is None
 
 
 @pytest.mark.anyio
@@ -281,6 +314,7 @@ async def test_blacklist_poll_status_returns_only_change_detection_fields(
     assert response.headers["X-Request-ID"] == request_id
     assert application_client.blacklist_status_request_id == request_id
     assert application_client.blacklist_request is None
+    assert application_client.blacklist_analytics_request is None
 
 
 @pytest.mark.anyio
@@ -309,3 +343,97 @@ async def test_blacklist_page_loads_same_origin_polling_script(
     assert "currentSnapshotId: 42" in page.text
     assert script.status_code == 200
     assert "POLL_INTERVAL_MS = 30000" in script.text
+
+
+@pytest.mark.anyio
+async def test_blacklist_dashboard_is_server_rendered_and_accessible(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    response = await client.get("/blacklist")
+
+    assert response.status_code == 200
+    assert '<h2 id="analytics-heading">Snapshot analytics</h2>' in response.text
+    assert 'aria-label="Latest snapshot analytics summary"' in response.text
+    assert 'aria-label="Abuse confidence score distribution"' in response.text
+    assert 'aria-label="Top country distribution"' in response.text
+    assert 'aria-label="IP version composition"' in response.text
+    assert 'aria-label="Recent snapshot change charts"' in response.text
+    assert "View score data table" in response.text
+    assert "View country data table" in response.text
+    assert "View IP version data table" in response.text
+    assert "Changes between recent accepted snapshot pairs" in response.text
+    assert "Retained entries" in response.text
+    assert "Confidence threshold" in response.text
+    assert "Unknown" in response.text
+    assert "Other" in response.text
+    assert "The 2-entry result limit was reached." in response.text
+    assert "8.8.8.8" in response.text
+    assert '<script src="/static/blacklist.js"></script>' in response.text
+    assert "blacklist/analytics" not in response.text
+
+
+@pytest.mark.anyio
+async def test_blacklist_analytics_failure_preserves_entry_table(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    application_client.blacklist_analytics_error = (
+        "internal analytics dependency detail"
+    )
+
+    response = await client.get("/blacklist")
+
+    assert response.status_code == 200
+    assert "Snapshot analytics are temporarily unavailable." in response.text
+    assert "internal analytics dependency detail" not in response.text
+    assert "Blacklist entries" in response.text
+    assert "8.8.8.8" in response.text
+
+
+@pytest.mark.anyio
+async def test_blacklist_dashboard_one_snapshot_has_useful_churn_empty_state(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    application_client.blacklist_analytics_result = (
+        application_client.blacklist_analytics_result.model_copy(
+            update={"snapshot_churn": []}
+        )
+    )
+
+    response = await client.get("/blacklist")
+
+    assert "Snapshot analytics" in response.text
+    assert "Retained entries" in response.text
+    assert (
+        "Snapshot change history will appear after a second accepted snapshot."
+        in response.text
+    )
+    assert "Blacklist entries" in response.text
+
+
+@pytest.mark.anyio
+async def test_blacklist_dashboard_escapes_analytics_content(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    sentinel = "<script>alert('analytics')</script>"
+    application_client.blacklist_analytics_result.top_countries.items[
+        0
+    ].country_code = sentinel
+
+    response = await client.get("/blacklist")
+
+    assert sentinel not in response.text
+    assert "&lt;script&gt;alert" in response.text
+
+
+@pytest.mark.anyio
+async def test_blacklist_dashboard_css_is_local_and_responsive(
+    client: AsyncClient,
+) -> None:
+    page = await client.get("/blacklist")
+    stylesheet = await client.get("/static/blacklist.css")
+
+    assert '<link rel="stylesheet" href="/static/blacklist.css">' in page.text
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert "@media (max-width: 44rem)" in stylesheet.text
+    assert ".chart-grid" in stylesheet.text

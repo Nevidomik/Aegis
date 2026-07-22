@@ -2,16 +2,28 @@
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from ipaddress import ip_address
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import Protocol
 
-from provider_service.provider import AbuseIPDBProvider
 from provider_service.schemas import (
+    BlacklistProviderResult,
     BlacklistRequestParameters,
     InternalBlacklistRequest,
     InternalBlacklistResponse,
     InternalReputationRequest,
     InternalReputationResponse,
+    ReputationResult,
 )
+
+
+class ReputationProvider(Protocol):
+    async def lookup(
+        self, address: IPv4Address | IPv6Address, max_age_days: int
+    ) -> ReputationResult: ...
+
+    async def blacklist(
+        self, confidence_minimum: int, limit: int
+    ) -> BlacklistProviderResult: ...
 
 
 class ReputationProxyService:
@@ -23,7 +35,7 @@ class ReputationProxyService:
     async def check(
         self,
         request: InternalReputationRequest,
-        provider: AbuseIPDBProvider,
+        provider: ReputationProvider,
     ) -> InternalReputationResponse:
         reputation = await provider.lookup(
             ip_address(request.ip_address), request.max_age_days
@@ -37,7 +49,7 @@ class ReputationProxyService:
     async def blacklist(
         self,
         request: InternalBlacklistRequest,
-        provider: AbuseIPDBProvider,
+        provider: ReputationProvider,
     ) -> InternalBlacklistResponse:
         """Return a complete normalized snapshot without persistence."""
         snapshot = await provider.blacklist(request.confidence_minimum, request.limit)

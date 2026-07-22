@@ -10,8 +10,15 @@ from ui_service.application_client import (
 )
 from ui_service.main import app
 from ui_service.schemas import (
+    BlacklistAnalytics,
+    BlacklistAnalyticsSnapshot,
+    BlacklistCountryCount,
+    BlacklistCountryDistribution,
     BlacklistEntry,
+    BlacklistIpVersionCount,
     BlacklistPage,
+    BlacklistScoreBucket,
+    BlacklistSnapshotChurn,
     BlacklistSnapshotSummary,
     BlacklistStatus,
     CheckResult,
@@ -98,10 +105,44 @@ class FakeApplicationClient:
             offset=0,
             total=2,
         )
+        self.blacklist_analytics_result = BlacklistAnalytics(
+            latest_snapshot=BlacklistAnalyticsSnapshot(
+                snapshot_id=42,
+                provider_generated_at=datetime(2026, 7, 22, 12, tzinfo=UTC),
+                confidence_minimum=90,
+                requested_limit=2,
+                returned_count=2,
+                result_limit_reached=True,
+            ),
+            score_distribution=[
+                BlacklistScoreBucket(minimum=95, maximum=99, count=1),
+                BlacklistScoreBucket(minimum=100, maximum=100, count=1),
+            ],
+            top_countries=BlacklistCountryDistribution(
+                items=[BlacklistCountryCount(country_code="US", count=1)],
+                unknown_count=1,
+                other_count=0,
+            ),
+            ip_versions=[
+                BlacklistIpVersionCount(ip_version=4, count=1),
+                BlacklistIpVersionCount(ip_version=6, count=1),
+            ],
+            snapshot_churn=[
+                BlacklistSnapshotChurn(
+                    current_snapshot_id=42,
+                    previous_snapshot_id=41,
+                    added=1,
+                    removed=2,
+                    retained=1,
+                )
+            ],
+        )
         self.blacklist_status_error: str | None = None
         self.blacklist_error: str | None = None
+        self.blacklist_analytics_error: str | None = None
         self.blacklist_status_request_id: str | None = None
         self.blacklist_request: dict[str, object] | None = None
+        self.blacklist_analytics_request: dict[str, object] | None = None
 
     async def ready(self, *, request_id: str) -> None:
         self.ready_request_id = request_id
@@ -145,6 +186,17 @@ class FakeApplicationClient:
         if self.blacklist_error is not None:
             raise ApplicationClientError(self.blacklist_error)
         return self.blacklist_page.model_copy(update={"limit": limit, "offset": offset})
+
+    async def blacklist_analytics(
+        self, *, pair_limit: int, request_id: str
+    ) -> BlacklistAnalytics:
+        self.blacklist_analytics_request = {
+            "pair_limit": pair_limit,
+            "request_id": request_id,
+        }
+        if self.blacklist_analytics_error is not None:
+            raise ApplicationClientError(self.blacklist_analytics_error)
+        return self.blacklist_analytics_result
 
 
 @pytest.fixture

@@ -214,7 +214,7 @@ async def test_blacklist_maps_transport_failures(failure: str) -> None:
     ],
 )
 @pytest.mark.anyio
-async def test_blacklist_rejects_malformed_rate_limit_headers(
+async def test_blacklist_ignores_malformed_rate_limit_headers(
     header: str, value: str
 ) -> None:
     async with httpx.AsyncClient(
@@ -225,13 +225,51 @@ async def test_blacklist_rejects_malformed_rate_limit_headers(
             )
         ),
     ) as client:
-        with pytest.raises(UpstreamInvalidResponseError):
+        result = await AbuseIPDBProvider(client).blacklist(90, 1000)
+
+    assert result.rate_limit.model_dump() == {
+        "limit": None,
+        "remaining": None,
+        "reset_at": None,
+        "retry_after_seconds": None,
+    }
+
+
+@pytest.mark.anyio
+async def test_blacklist_ignores_contradictory_remaining_header() -> None:
+    headers = {"X-RateLimit-Limit": "5", "X-RateLimit-Remaining": "6"}
+    async with httpx.AsyncClient(
+        base_url="https://api.abuseipdb.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=blacklist_response([]), headers=headers)
+        ),
+    ) as client:
+        result = await AbuseIPDBProvider(client).blacklist(90, 1000)
+
+    assert result.rate_limit.limit == 5
+    assert result.rate_limit.remaining is None
+
+
+@pytest.mark.anyio
+async def test_rate_limit_ignores_malformed_retry_constraints() -> None:
+    response = httpx.Response(
+        429,
+        headers={"Retry-After": "tomorrow", "X-RateLimit-Reset": "invalid"},
+    )
+    async with httpx.AsyncClient(
+        base_url="https://api.abuseipdb.test",
+        transport=httpx.MockTransport(lambda _: response),
+    ) as client:
+        with pytest.raises(RateLimitExceededError) as captured:
             await AbuseIPDBProvider(client).blacklist(90, 1000)
+
+    assert captured.value.retry_after_seconds is None
+    assert captured.value.reset_at is None
 
 
 @pytest.mark.anyio
 async def test_blacklist_rejects_more_entries_than_requested() -> None:
-    items = [
+    items: list[dict[str, object]] = [
         {"ipAddress": address, "abuseConfidenceScore": 100}
         for address in ("8.8.8.8", "1.1.1.1")
     ]

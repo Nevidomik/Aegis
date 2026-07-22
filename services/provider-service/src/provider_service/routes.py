@@ -1,6 +1,8 @@
 """Thin HTTP routing and public error mapping for Provider."""
 
+import logging
 from collections.abc import Awaitable, Callable
+from time import monotonic
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -18,12 +20,19 @@ from provider_service.schemas import (
     InternalReputationRequest,
     InternalReputationResponse,
 )
+from provider_service.security_logging import (
+    bind_request_id,
+    log_sanitized_exception,
+    redact_sensitive_text,
+    reset_request_id,
+)
 from provider_service.service import (
     ReputationProxyService,
     get_reputation_proxy_service,
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def error_response(
@@ -37,7 +46,7 @@ def error_response(
     body = ErrorResponse(
         error=ErrorDetail(
             code=code,
-            message=message,
+            message=redact_sensitive_text(message),
             request_id=request_id,
             retry=retry,
         )
@@ -64,7 +73,7 @@ async def request_id_middleware(
             request_id = UUID(supplied_request_id)
         except ValueError:
             generated_request_id = str(uuid4())
-            response = error_response(
+            response: Response = error_response(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 code="INVALID_REQUEST_ID",
                 message="X-Request-ID must be a valid UUID.",
@@ -74,8 +83,23 @@ async def request_id_middleware(
             return response
 
     request.state.request_id = request_id
-    response = await call_next(request)
+    started = monotonic()
+    token = bind_request_id(str(request_id))
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
     response.headers["X-Request-ID"] = str(request_id)
+    logger.info(
+        "http_request_completed",
+        extra={
+            "request_id": str(request_id),
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": round((monotonic() - started) * 1000, 2),
+        },
+    )
     return response
 
 
@@ -145,6 +169,10 @@ async def application_exception_handler(
             "retry_after_seconds": retry_after_seconds,
             "reset_at": reset_at,
         }
+    logger.warning(
+        "provider_request_failed",
+        extra={"request_id": current_request_id(request), "error_code": error.code},
+    )
     return error_response(
         status_code=error.status_code,
         code=error.code,
@@ -162,4 +190,19 @@ async def validation_exception_handler(
         code="INVALID_REQUEST",
         message="The request did not satisfy the API contract.",
         request_id=current_request_id(request),
+    )
+
+
+async def unexpected_exception_handler(
+    request: Request, error: Exception
+) -> JSONResponse:
+    request_id = current_request_id(request)
+    log_sanitized_exception(
+        logger, "unexpected_request_failure", error, request_id=request_id
+    )
+    return error_response(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="INTERNAL_SERVER_ERROR",
+        message="An unexpected internal error occurred.",
+        request_id=request_id,
     )

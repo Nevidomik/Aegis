@@ -7,10 +7,10 @@ def test_api_key_is_required_from_environment(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
 
     with pytest.raises(ValidationError):
-        Settings(_env_file=None)  # type: ignore[call-arg]
+        Settings(_env_file=None)
 
     monkeypatch.setenv("ABUSEIPDB_API_KEY", "environment-secret")
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    settings = Settings(_env_file=None)
 
     assert settings.abuseipdb_api_key.get_secret_value() == "environment-secret"
     assert "environment-secret" not in repr(settings)

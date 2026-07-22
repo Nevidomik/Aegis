@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import Mock
@@ -110,7 +110,7 @@ def override_service() -> Iterator[Any]:
 
 @pytest.fixture
 def override_dependency() -> Iterator[Any]:
-    def apply(dependency: object, replacement: object) -> None:
+    def apply(dependency: Callable[..., Any], replacement: object) -> None:
         def dependency_override() -> object:
             return replacement
 

@@ -1,5 +1,7 @@
 """AbuseIPDB reputation client and deterministic test provider."""
 
+import asyncio
+import logging
 from datetime import UTC, datetime
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address, ip_address
@@ -33,6 +35,9 @@ from provider_service.schemas import (
     RateLimitMetadata,
     ReputationResult,
 )
+from provider_service.security_logging import bound_request_id, log_sanitized_exception
+
+logger = logging.getLogger(__name__)
 
 
 def _to_camel(value: str) -> str:
@@ -174,23 +179,39 @@ class AbuseIPDBBlacklistEnvelope(BaseModel):
 class AbuseIPDBProvider:
     """Perform validated lookups with a lifecycle-owned HTTPX client."""
 
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, *, operation_timeout_seconds: float = 20.0
+    ) -> None:
         self.client = client
+        self.operation_timeout_seconds = operation_timeout_seconds
 
     async def lookup(
         self, address: IPv4Address | IPv6Address, max_age_days: int
     ) -> ReputationResult:
         try:
-            response = await self.client.get(
-                "/api/v2/check",
-                params={
-                    "ipAddress": str(address),
-                    "maxAgeInDays": max_age_days,
-                },
+            async with asyncio.timeout(self.operation_timeout_seconds):
+                response = await self.client.get(
+                    "/api/v2/check",
+                    params={
+                        "ipAddress": str(address),
+                        "maxAgeInDays": max_age_days,
+                    },
+                )
+        except (httpx.TimeoutException, TimeoutError) as error:
+            log_sanitized_exception(
+                logger,
+                "upstream_http_timeout",
+                error,
+                request_id=bound_request_id(),
             )
-        except httpx.TimeoutException as error:
             raise UpstreamTimeoutError from error
         except httpx.RequestError as error:
+            log_sanitized_exception(
+                logger,
+                "upstream_http_failure",
+                error,
+                request_id=bound_request_id(),
+            )
             raise AbuseIPDBUnavailableError from error
 
         self._raise_for_status(response.status_code)
@@ -223,16 +244,29 @@ class AbuseIPDBProvider:
     ) -> BlacklistProviderResult:
         """Return one complete validated AbuseIPDB blacklist snapshot."""
         try:
-            response = await self.client.get(
-                "/api/v2/blacklist",
-                params={
-                    "confidenceMinimum": confidence_minimum,
-                    "limit": limit,
-                },
+            async with asyncio.timeout(self.operation_timeout_seconds):
+                response = await self.client.get(
+                    "/api/v2/blacklist",
+                    params={
+                        "confidenceMinimum": confidence_minimum,
+                        "limit": limit,
+                    },
+                )
+        except (httpx.TimeoutException, TimeoutError) as error:
+            log_sanitized_exception(
+                logger,
+                "upstream_http_timeout",
+                error,
+                request_id=bound_request_id(),
             )
-        except httpx.TimeoutException as error:
             raise UpstreamTimeoutError from error
         except httpx.RequestError as error:
+            log_sanitized_exception(
+                logger,
+                "upstream_http_failure",
+                error,
+                request_id=bound_request_id(),
+            )
             raise AbuseIPDBUnavailableError from error
 
         if response.status_code == 429:
@@ -277,26 +311,31 @@ class AbuseIPDBProvider:
                 return None
             try:
                 value = int(raw_value)
-            except ValueError as error:
-                raise UpstreamInvalidResponseError from error
+            except ValueError:
+                return None
             if value < 0:
-                raise UpstreamInvalidResponseError
+                return None
             return value
 
         reset_timestamp = optional_integer("X-RateLimit-Reset")
+        limit = optional_integer("X-RateLimit-Limit")
+        remaining = optional_integer("X-RateLimit-Remaining")
+        if limit is not None and remaining is not None and remaining > limit:
+            remaining = None
         try:
-            return RateLimitMetadata(
-                limit=optional_integer("X-RateLimit-Limit"),
-                remaining=optional_integer("X-RateLimit-Remaining"),
-                reset_at=(
-                    datetime.fromtimestamp(reset_timestamp, tz=UTC)
-                    if reset_timestamp is not None
-                    else None
-                ),
-                retry_after_seconds=optional_integer("Retry-After"),
+            reset_at = (
+                datetime.fromtimestamp(reset_timestamp, tz=UTC)
+                if reset_timestamp is not None
+                else None
             )
-        except (OSError, OverflowError, ValueError, ValidationError) as error:
-            raise UpstreamInvalidResponseError from error
+        except OSError, OverflowError, ValueError:
+            reset_at = None
+        return RateLimitMetadata(
+            limit=limit,
+            remaining=remaining,
+            reset_at=reset_at,
+            retry_after_seconds=optional_integer("Retry-After"),
+        )
 
     @staticmethod
     def _raise_for_status(status_code: int) -> None:

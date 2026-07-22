@@ -1,6 +1,8 @@
 """HTTP routes and error mapping for the History service."""
 
+import logging
 from collections.abc import Awaitable, Callable
+from time import monotonic
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -20,6 +22,8 @@ from history_service.exceptions import ApplicationError
 from history_service.provider_client import ProviderClient, get_provider_client
 from history_service.schemas import (
     ApplicationCheckRequest,
+    BlacklistAnalyticsQuery,
+    BlacklistAnalyticsResponse,
     BlacklistEntryPageQuery,
     BlacklistEntryQuery,
     BlacklistPage,
@@ -32,6 +36,10 @@ from history_service.schemas import (
     HistoryListQuery,
     HistoryRecord,
 )
+from history_service.security_logging import (
+    log_sanitized_exception,
+    redact_sensitive_text,
+)
 from history_service.service import (
     ApplicationService,
     HistoryService,
@@ -42,6 +50,7 @@ from history_service.service import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def request_id_from(request: Request) -> str:
@@ -53,7 +62,11 @@ def error_response(
     *, status_code: int, code: str, message: str, request_id: str
 ) -> JSONResponse:
     body = ErrorResponse(
-        error=ErrorDetail(code=code, message=message, request_id=request_id)
+        error=ErrorDetail(
+            code=code,
+            message=redact_sensitive_text(message),
+            request_id=request_id,
+        )
     )
     return JSONResponse(status_code=status_code, content=body.model_dump())
 
@@ -70,7 +83,7 @@ async def request_id_middleware(
             request_id = UUID(supplied_request_id)
         except ValueError:
             generated_request_id = str(uuid4())
-            response = error_response(
+            response: Response = error_response(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 code="INVALID_REQUEST_ID",
                 message="X-Request-ID must be a valid UUID.",
@@ -80,8 +93,19 @@ async def request_id_middleware(
             return response
 
     request.state.request_id = request_id
+    started = monotonic()
     response = await call_next(request)
     response.headers["X-Request-ID"] = str(request_id)
+    logger.info(
+        "http_request_completed",
+        extra={
+            "request_id": str(request_id),
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": round((monotonic() - started) * 1000, 2),
+        },
+    )
     return response
 
 
@@ -93,12 +117,19 @@ async def liveness() -> dict[str, str]:
 
 @router.get("/health/ready", tags=["health"], response_model=None)
 def readiness(
+    request: Request,
     session: Annotated[Session, Depends(get_session)],
 ) -> dict[str, str] | JSONResponse:
     """Confirm that the service can execute a minimal database query."""
     try:
         session.execute(text("SELECT 1"))
-    except SQLAlchemyError:
+    except SQLAlchemyError as error:
+        log_sanitized_exception(
+            logger,
+            "database_readiness_failed",
+            error,
+            request_id=request_id_from(request),
+        )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "not ready"},
@@ -193,6 +224,21 @@ def get_blacklist_status(
 
 
 @router.get(
+    "/api/v1/blacklist/analytics",
+    response_model=BlacklistAnalyticsResponse,
+    responses={503: {"model": ErrorResponse}},
+    tags=["blacklist"],
+)
+def get_blacklist_analytics(
+    query: Annotated[BlacklistAnalyticsQuery, Query()],
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[BlacklistReadService, Depends(get_blacklist_read_service)],
+) -> BlacklistAnalyticsResponse:
+    """Return bounded MariaDB-derived analytics without provider activity."""
+    return service.analytics(session, query)
+
+
+@router.get(
     "/api/v1/blacklist/snapshots",
     response_model=BlacklistSnapshotList,
     responses={503: {"model": ErrorResponse}},
@@ -269,6 +315,10 @@ async def application_exception_handler(
     request: Request, error: ApplicationError
 ) -> JSONResponse:
     """Return safe application and dependency failures."""
+    logger.warning(
+        "application_request_failed",
+        extra={"request_id": request_id_from(request), "error_code": error.code},
+    )
     return error_response(
         status_code=error.status_code,
         code=error.code,
@@ -278,9 +328,12 @@ async def application_exception_handler(
 
 
 async def unavailable_exception_handler(
-    request: Request, _: HistoryUnavailableError
+    request: Request, error: HistoryUnavailableError
 ) -> JSONResponse:
     """Hide database error details from callers."""
+    log_sanitized_exception(
+        logger, "database_request_failed", error, request_id=request_id_from(request)
+    )
     return error_response(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         code="DATABASE_UNAVAILABLE",
@@ -298,4 +351,20 @@ async def idempotency_conflict_exception_handler(
         code="IDEMPOTENCY_CONFLICT",
         message="The request ID has already been used with different request data.",
         request_id=request_id_from(request),
+    )
+
+
+async def unexpected_exception_handler(
+    request: Request, error: Exception
+) -> JSONResponse:
+    """Log a sanitized traceback and return a stable public failure."""
+    request_id = request_id_from(request)
+    log_sanitized_exception(
+        logger, "unexpected_request_failure", error, request_id=request_id
+    )
+    return error_response(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="INTERNAL_SERVER_ERROR",
+        message="An unexpected internal error occurred.",
+        request_id=request_id,
     )

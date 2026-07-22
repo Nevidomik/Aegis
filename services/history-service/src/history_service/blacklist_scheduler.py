@@ -56,6 +56,7 @@ class BlacklistScheduler:
         waiter: Waiter = interruptible_wait,
         coordination_delay_seconds: int = 30,
         infrastructure_delay_seconds: int = 300,
+        sync_deadline_seconds: float = 30.0,
     ) -> None:
         self.sync_service = sync_service
         self.provider = provider
@@ -66,6 +67,7 @@ class BlacklistScheduler:
         self.waiter = waiter
         self.coordination_delay_seconds = coordination_delay_seconds
         self.infrastructure_delay_seconds = infrastructure_delay_seconds
+        self.sync_deadline_seconds = sync_deadline_seconds
 
     async def run(self, stop_event: asyncio.Event) -> None:
         logger.info("blacklist_scheduler_started")
@@ -91,9 +93,18 @@ class BlacklistScheduler:
 
                 logger.info("blacklist_sync_started")
                 try:
-                    result: BlacklistSyncResult = await self.runner(
-                        self.sync_service.run_once, self.provider
+                    async with asyncio.timeout(self.sync_deadline_seconds):
+                        result: BlacklistSyncResult = await self.runner(
+                            self.sync_service.run_once, self.provider
+                        )
+                except TimeoutError:
+                    logger.error(
+                        "blacklist_sync_deadline_exceeded",
+                        extra={"error_code": "PROVIDER_SERVICE_UNAVAILABLE"},
                     )
+                    if await self.waiter(stop_event, self.infrastructure_delay_seconds):
+                        break
+                    continue
                 except BlacklistSyncInfrastructureError:
                     logger.error(
                         "blacklist_sync_failed",

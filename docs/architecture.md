@@ -263,12 +263,12 @@ is not read or written by blacklist synchronization.
 
 ### UI Service
 
-* **May receive:** `HISTORY_SERVICE_URL`, `HISTORY_TIMEOUT_SECONDS`
+* **May receive:** `HISTORY_SERVICE_URL`, phase-specific `HISTORY_*_TIMEOUT_SECONDS`
 - **Must not receive:** `PROVIDER_SERVICE_URL`, `ABUSEIPDB_API_KEY`, `DATABASE_URL`, `MARIADB_PASSWORD`
 
 ### History Service
 
-- **May receive:** `PROVIDER_SERVICE_URL`, `PROVIDER_TIMEOUT_SECONDS`,
+- **May receive:** `PROVIDER_SERVICE_URL`, phase-specific `PROVIDER_*_TIMEOUT_SECONDS`,
   `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`,
   `MARIADB_PASSWORD`, and the `BLACKLIST_*` scheduler settings documented in
   `services/history-service/.env.example`

@@ -1,6 +1,9 @@
 """Server-rendered routes for the Aegis UI."""
 
+import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -14,22 +17,32 @@ from ui_service.application_client import (
     get_application_client,
 )
 from ui_service.schemas import (
+    BlacklistAnalytics,
     BlacklistPage,
     BlacklistPollStatus,
     BlacklistStatus,
     CheckResult,
     HistoryPage,
 )
+from ui_service.security_logging import log_sanitized_exception
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 BLACKLIST_PAGE_SIZE = 100
+BLACKLIST_CHURN_PAIR_LIMIT = 10
 BLACKLIST_SCRIPT = (Path(__file__).parent / "static" / "blacklist.js").read_text(
+    encoding="utf-8"
+)
+BLACKLIST_STYLE = (Path(__file__).parent / "static" / "blacklist.css").read_text(
     encoding="utf-8"
 )
 
 
 def request_id_for(request: Request) -> str:
+    established = getattr(request.state, "request_id", None)
+    if established is not None:
+        return str(established)
     supplied = request.headers.get("X-Request-ID")
     if supplied is not None:
         try:
@@ -37,6 +50,27 @@ def request_id_for(request: Request) -> str:
         except ValueError:
             pass
     return str(uuid4())
+
+
+async def request_logging_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    request_id = request_id_for(request)
+    request.state.request_id = request_id
+    started = monotonic()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "http_request_completed",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": round((monotonic() - started) * 1000, 2),
+        },
+    )
+    return response
 
 
 async def load_history(
@@ -85,6 +119,11 @@ async def blacklist_script() -> Response:
     return Response(content=BLACKLIST_SCRIPT, media_type="text/javascript")
 
 
+@router.get("/static/blacklist.css", include_in_schema=False)
+async def blacklist_style() -> Response:
+    return Response(content=BLACKLIST_STYLE, media_type="text/css")
+
+
 @router.get("/health/ready", tags=["health"], response_model=None)
 async def readiness(
     request: Request,
@@ -125,18 +164,31 @@ async def blacklist(
     request_id = request_id_for(request)
     status_result: BlacklistStatus | None = None
     blacklist_page: BlacklistPage | None = None
+    analytics: BlacklistAnalytics | None = None
     error: str | None = None
+    analytics_error: str | None = None
 
     try:
         status_result = await application_client.blacklist_status(request_id=request_id)
-        if status_result.state != "empty":
+    except ApplicationClientError as application_error:
+        error = str(application_error)
+
+    if status_result is not None and status_result.state != "empty":
+        try:
             blacklist_page = await application_client.blacklist(
                 limit=BLACKLIST_PAGE_SIZE,
                 offset=(page - 1) * BLACKLIST_PAGE_SIZE,
                 request_id=request_id,
             )
-    except ApplicationClientError as application_error:
-        error = str(application_error)
+        except ApplicationClientError as application_error:
+            error = str(application_error)
+        try:
+            analytics = await application_client.blacklist_analytics(
+                pair_limit=BLACKLIST_CHURN_PAIR_LIMIT,
+                request_id=request_id,
+            )
+        except ApplicationClientError:
+            analytics_error = "Snapshot analytics are temporarily unavailable."
 
     response = templates.TemplateResponse(
         request=request,
@@ -144,7 +196,9 @@ async def blacklist(
         context={
             "status": status_result,
             "blacklist": blacklist_page,
+            "analytics": analytics,
             "error": error,
+            "analytics_error": analytics_error,
             "page": page,
         },
     )
@@ -223,3 +277,25 @@ async def submit_check(
         history=history,
         history_error=history_error,
     )
+
+
+async def unexpected_exception_handler(
+    request: Request, error: Exception
+) -> JSONResponse:
+    """Return a request-correlated response without exposing exception details."""
+    request_id = request_id_for(request)
+    log_sanitized_exception(
+        logger, "unexpected_request_failure", error, request_id=request_id
+    )
+    response = JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An unexpected internal error occurred.",
+                "request_id": request_id,
+            }
+        },
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response

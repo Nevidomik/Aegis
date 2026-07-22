@@ -3,12 +3,24 @@ from unittest.mock import Mock
 
 import pytest
 from history_service.blacklist_read import BlacklistReadService
+from history_service.blacklist_repository import (
+    BlacklistRepository,
+    CountryCount,
+    IpVersionCount,
+    ScoreBucketCount,
+    SnapshotChurnCount,
+)
 from history_service.models import (
     BlacklistSnapshot,
     BlacklistSnapshotEntry,
     BlacklistSyncRun,
 )
-from history_service.schemas import BlacklistEntryQuery, BlacklistSnapshotListQuery
+from history_service.schemas import (
+    BlacklistAnalyticsQuery,
+    BlacklistEntryQuery,
+    BlacklistSnapshotListQuery,
+)
+from sqlalchemy.orm import Session
 
 NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 
@@ -167,3 +179,141 @@ def test_empty_latest_and_missing_snapshot_return_none() -> None:
     assert service.snapshot(Mock(), 999, query) is None
     repository.list_entries.assert_not_called()
     repository.count_entries.assert_not_called()
+
+
+def test_analytics_returns_stable_buckets_unknown_other_and_bounded_churn() -> None:
+    repository = Mock()
+    repository.get_latest_snapshot.return_value = snapshot()
+    repository.get_latest_snapshot.return_value.returned_count = 1000
+    repository.score_distribution.return_value = [
+        ScoreBucketCount(minimum=90, count=10),
+        ScoreBucketCount(minimum=95, count=20),
+        ScoreBucketCount(minimum=100, count=970),
+    ]
+    repository.country_distribution.return_value = [
+        CountryCount(country_code="US", count=300),
+        CountryCount(country_code=None, count=200),
+        CountryCount(country_code="CA", count=150),
+        CountryCount(country_code="DE", count=100),
+        CountryCount(country_code="FR", count=90),
+        CountryCount(country_code="GB", count=80),
+        CountryCount(country_code="NL", count=50),
+        CountryCount(country_code="AU", count=30),
+    ]
+    repository.ip_version_distribution.return_value = [
+        IpVersionCount(ip_version=4, count=900),
+        IpVersionCount(ip_version=6, count=100),
+    ]
+    repository.snapshot_churn.return_value = [
+        SnapshotChurnCount(
+            current_snapshot_id=42,
+            previous_snapshot_id=41,
+            added=20,
+            removed=10,
+            retained=980,
+        )
+    ]
+    service = BlacklistReadService(repository, clock=lambda: NOW)
+
+    result = service.analytics(Mock(), BlacklistAnalyticsQuery(pair_limit=7))
+
+    assert result.latest_snapshot is not None
+    assert result.latest_snapshot.result_limit_reached is True
+    assert [(item.minimum, item.maximum) for item in result.score_distribution] == [
+        (0, 9),
+        (10, 19),
+        (20, 29),
+        (30, 39),
+        (40, 49),
+        (50, 59),
+        (60, 69),
+        (70, 79),
+        (80, 89),
+        (90, 94),
+        (95, 99),
+        (100, 100),
+    ]
+    assert result.score_distribution[0].count == 0
+    assert result.score_distribution[-1].count == 970
+    assert [item.country_code for item in result.top_countries.items] == [
+        "US",
+        "CA",
+        "DE",
+        "FR",
+        "GB",
+    ]
+    assert result.top_countries.unknown_count == 200
+    assert result.top_countries.other_count == 80
+    assert [(item.ip_version, item.count) for item in result.ip_versions] == [
+        (4, 900),
+        (6, 100),
+    ]
+    assert result.snapshot_churn[0].retained == 980
+    repository.snapshot_churn.assert_called_once_with(
+        repository.get_latest_snapshot.call_args.args[0],
+        provider="AbuseIPDB",
+        pair_limit=7,
+    )
+
+
+def test_analytics_query_count_is_constant_and_empty_state_short_circuits() -> None:
+    repository = Mock()
+    repository.get_latest_snapshot.return_value = snapshot()
+    repository.score_distribution.return_value = [
+        ScoreBucketCount(minimum=100, count=2)
+    ]
+    repository.country_distribution.return_value = [
+        CountryCount(country_code="US", count=2)
+    ]
+    repository.ip_version_distribution.return_value = [
+        IpVersionCount(ip_version=4, count=2)
+    ]
+    repository.snapshot_churn.return_value = []
+    service = BlacklistReadService(repository, clock=lambda: NOW)
+
+    populated = service.analytics(Mock(), BlacklistAnalyticsQuery(pair_limit=30))
+
+    assert populated.latest_snapshot is not None
+    analytics_methods = (
+        repository.get_latest_snapshot,
+        repository.score_distribution,
+        repository.country_distribution,
+        repository.ip_version_distribution,
+        repository.snapshot_churn,
+    )
+    assert sum(method.call_count for method in analytics_methods) == 5
+
+    repository.reset_mock()
+    repository.get_latest_snapshot.return_value = None
+    empty = service.analytics(Mock(), BlacklistAnalyticsQuery(pair_limit=30))
+
+    assert empty.latest_snapshot is None
+    assert empty.score_distribution == []
+    assert empty.top_countries.unknown_count == 0
+    assert empty.ip_versions == []
+    assert empty.snapshot_churn == []
+    repository.get_latest_snapshot.assert_called_once()
+    repository.score_distribution.assert_not_called()
+    repository.snapshot_churn.assert_not_called()
+
+
+def test_analytics_executes_five_database_queries_independent_of_pair_limit() -> None:
+    session = Mock(spec=Session)
+    session.scalar.return_value = snapshot()
+    session.execute.side_effect = [
+        [(100, 2)],
+        [("US", 2)],
+        [(4, 2)],
+        [],
+    ]
+    service = BlacklistReadService(BlacklistRepository(), clock=lambda: NOW)
+
+    result = service.analytics(session, BlacklistAnalyticsQuery(pair_limit=30))
+
+    assert result.latest_snapshot is not None
+    assert session.scalar.call_count == 1
+    assert session.execute.call_count == 4
+    assert session.scalar.call_count + session.execute.call_count == 5
+    for call in session.execute.call_args_list:
+        sql = str(call.args[0])
+        assert "ip_check_history" not in sql

@@ -46,13 +46,17 @@ trap 'rm -f "${temporary_environment}" "${temporary_service}" "${PASSWORD_FILE}"
   printf 'MARIADB_USER=aegis_history\n'
   printf 'MARIADB_PASSWORD=%s\n' "${MARIADB_PASSWORD}"
   printf 'PROVIDER_SERVICE_URL=%s\n' "${PROVIDER_URL}"
-  printf 'PROVIDER_TIMEOUT_SECONDS=10\n'
+  printf 'PROVIDER_CONNECT_TIMEOUT_SECONDS=5\n'
+  printf 'PROVIDER_READ_TIMEOUT_SECONDS=10\n'
+  printf 'PROVIDER_WRITE_TIMEOUT_SECONDS=5\n'
+  printf 'PROVIDER_POOL_TIMEOUT_SECONDS=5\n'
   printf 'BLACKLIST_CONFIDENCE_MINIMUM=90\n'
   printf 'BLACKLIST_SCHEDULER_ENABLED=true\n'
   printf 'BLACKLIST_SYNC_INTERVAL_SECONDS=21600\n'
   printf 'BLACKLIST_STALE_AFTER_SECONDS=43200\n'
   printf 'BLACKLIST_MAXIMUM_TEMPORARY_ATTEMPTS=4\n'
   printf 'BLACKLIST_MAXIMUM_JITTER_SECONDS=30\n'
+  printf 'BLACKLIST_SYNC_DEADLINE_SECONDS=30\n'
 } >"${temporary_environment}"
 install -o root -g aegis -m 0640 "${temporary_environment}" "${ENVIRONMENT_FILE}"
 
@@ -62,7 +66,8 @@ wait_for_url() {
   local attempts=30
 
   while (( attempts > 0 )); do
-    if curl --fail --silent --show-error "${url}" >/dev/null 2>&1; then
+    if curl --fail --silent --show-error --connect-timeout 2 --max-time 3 \
+      "${url}" >/dev/null 2>&1; then
       return 0
     fi
     attempts=$((attempts - 1))
@@ -127,7 +132,7 @@ User=aegis
 Group=aegis
 WorkingDirectory=${SERVICE_DIRECTORY}
 EnvironmentFile=${ENVIRONMENT_FILE}
-ExecStart=${VENV_DIRECTORY}/bin/uvicorn history_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host ${HISTORY_ADDRESS} --port ${HISTORY_PORT}
+ExecStart=${VENV_DIRECTORY}/bin/uvicorn history_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host ${HISTORY_ADDRESS} --port ${HISTORY_PORT} --no-access-log
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true

@@ -3,6 +3,7 @@ from history_service.config import SERVICE_ENV_FILE, Settings
 
 def test_database_url_escapes_credentials_and_targets_mariadb() -> None:
     settings = Settings(
+        _env_file=None,
         mariadb_database="aegis_history",
         mariadb_user="history@service",
         mariadb_password="secret:/value",
@@ -31,15 +32,22 @@ def test_provider_configuration_is_separate_from_database_credentials() -> None:
         mariadb_user="history",
         mariadb_password="secret",
         provider_service_url="http://provider.test",
-        provider_timeout_seconds=3,
+        provider_connect_timeout_seconds=1,
+        provider_read_timeout_seconds=2,
+        provider_write_timeout_seconds=3,
+        provider_pool_timeout_seconds=4,
     )
 
     assert str(settings.provider_service_url) == "http://provider.test/"
-    assert settings.provider_timeout_seconds == 3
+    assert settings.provider_connect_timeout_seconds == 1
+    assert settings.provider_read_timeout_seconds == 2
+    assert settings.provider_write_timeout_seconds == 3
+    assert settings.provider_pool_timeout_seconds == 4
 
 
 def test_blacklist_sync_configuration_has_safe_bounded_defaults() -> None:
     settings = Settings(
+        _env_file=None,
         mariadb_database="aegis_history",
         mariadb_user="history",
         mariadb_password="secret",
@@ -50,3 +58,4 @@ def test_blacklist_sync_configuration_has_safe_bounded_defaults() -> None:
     assert settings.blacklist_sync_interval_seconds == 21600
     assert settings.blacklist_maximum_temporary_attempts == 4
     assert settings.blacklist_maximum_jitter_seconds == 30
+    assert settings.blacklist_sync_deadline_seconds == 30

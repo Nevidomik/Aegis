@@ -27,7 +27,11 @@ trap 'rm -f "${temporary_environment}" "${temporary_service}"' EXIT
 
 {
   printf 'HISTORY_SERVICE_URL=%s\n' "${HISTORY_URL}"
-  printf 'HISTORY_TIMEOUT_SECONDS=5\n'
+  printf 'HISTORY_CONNECT_TIMEOUT_SECONDS=3\n'
+  printf 'HISTORY_READ_TIMEOUT_SECONDS=5\n'
+  printf 'HISTORY_WRITE_TIMEOUT_SECONDS=5\n'
+  printf 'HISTORY_POOL_TIMEOUT_SECONDS=3\n'
+  printf 'HISTORY_OPERATION_TIMEOUT_SECONDS=10\n'
 } >"${temporary_environment}"
 install -o root -g aegis -m 0640 "${temporary_environment}" "${ENVIRONMENT_FILE}"
 
@@ -45,7 +49,7 @@ User=aegis
 Group=aegis
 WorkingDirectory=${SERVICE_DIRECTORY}
 EnvironmentFile=${ENVIRONMENT_FILE}
-ExecStart=${VENV_DIRECTORY}/bin/uvicorn ui_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host 0.0.0.0 --port ${UI_PORT}
+ExecStart=${VENV_DIRECTORY}/bin/uvicorn ui_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host 0.0.0.0 --port ${UI_PORT} --no-access-log
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
@@ -67,7 +71,7 @@ wait_for_health() {
   local attempts=30
 
   while (( attempts > 0 )); do
-    if curl --fail --silent --show-error \
+    if curl --fail --silent --show-error --connect-timeout 2 --max-time 3 \
       "http://${UI_ADDRESS}:${UI_PORT}${path}" >/dev/null 2>&1; then
       return 0
     fi

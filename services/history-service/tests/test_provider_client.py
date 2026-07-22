@@ -60,15 +60,15 @@ def test_check_calls_only_internal_proxy_and_validates_response() -> None:
     ("internal_code", "application_code", "status_code"),
     [
         ("RATE_LIMIT_EXCEEDED", "RATE_LIMIT_EXCEEDED", 429),
-        ("UPSTREAM_INVALID_RESPONSE", "PROVIDER_INVALID_RESPONSE", 502),
-        ("UPSTREAM_REQUEST_REJECTED", "PROVIDER_REQUEST_REJECTED", 502),
+        ("UPSTREAM_INVALID_RESPONSE", "UPSTREAM_INVALID_RESPONSE", 502),
+        ("UPSTREAM_REQUEST_REJECTED", "UPSTREAM_REQUEST_REJECTED", 502),
         (
-            "ABUSEIPDB_AUTHENTICATION_FAILED",
-            "PROVIDER_AUTHENTICATION_FAILED",
+            "UPSTREAM_AUTHENTICATION_FAILED",
+            "UPSTREAM_AUTHENTICATION_FAILED",
             503,
         ),
-        ("ABUSEIPDB_UNAVAILABLE", "PROVIDER_UNAVAILABLE", 503),
-        ("UPSTREAM_TIMEOUT", "PROVIDER_TIMEOUT", 504),
+        ("UPSTREAM_UNAVAILABLE", "UPSTREAM_UNAVAILABLE", 503),
+        ("UPSTREAM_TIMEOUT", "UPSTREAM_TIMEOUT", 504),
     ],
 )
 def test_check_maps_proxy_errors(

@@ -1,5 +1,7 @@
 """Validated HTTP client for the internal Provider proxy boundary."""
 
+import logging
+
 import httpx
 from fastapi import Request
 from pydantic import ValidationError
@@ -7,15 +9,17 @@ from pydantic import ValidationError
 from history_service.exceptions import (
     ProviderServiceInvalidResponseError,
     ProviderServiceUnavailableError,
-    map_proxy_error,
 )
+from history_service.provider_error_contract import raise_mapped_provider_error
 from history_service.schemas import (
     ProviderBlacklistRequest,
     ProviderBlacklistResponse,
-    ProviderErrorResponse,
     ProviderReputationRequest,
     ProviderReputationResponse,
 )
+from history_service.security_logging import log_sanitized_exception
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderClient:
@@ -34,6 +38,9 @@ class ProviderClient:
                 headers={"X-Request-ID": request_id},
             )
         except httpx.RequestError as error:
+            log_sanitized_exception(
+                logger, "provider_http_failure", error, request_id=request_id
+            )
             raise ProviderServiceUnavailableError from error
 
         response_request_id = response.headers.get("X-Request-ID")
@@ -41,13 +48,7 @@ class ProviderClient:
             raise ProviderServiceInvalidResponseError
 
         if response.status_code >= 400:
-            try:
-                error_response = ProviderErrorResponse.model_validate(response.json())
-            except (ValueError, ValidationError) as error:
-                raise ProviderServiceInvalidResponseError from error
-            if error_response.error.request_id != request_id:
-                raise ProviderServiceInvalidResponseError
-            raise map_proxy_error(error_response.error.code)
+            raise_mapped_provider_error(response, request_id=request_id)
 
         if response.status_code != 200:
             raise ProviderServiceInvalidResponseError
@@ -73,6 +74,9 @@ class ProviderClient:
                 headers={"X-Request-ID": request_id},
             )
         except httpx.RequestError as error:
+            log_sanitized_exception(
+                logger, "provider_http_failure", error, request_id=request_id
+            )
             raise ProviderServiceUnavailableError(
                 code="PROVIDER_SERVICE_UNAVAILABLE"
             ) from error
@@ -83,30 +87,7 @@ class ProviderClient:
             )
 
         if response.status_code >= 400:
-            try:
-                error_response = ProviderErrorResponse.model_validate(response.json())
-            except (ValueError, ValidationError) as error:
-                raise ProviderServiceInvalidResponseError(
-                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
-                ) from error
-            detail = error_response.error
-            if detail.request_id != request_id:
-                raise ProviderServiceInvalidResponseError(
-                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
-                )
-            retry = detail.retry
-            mapped_error = map_proxy_error(
-                detail.code,
-                retry_after_seconds=(
-                    retry.retry_after_seconds if retry is not None else None
-                ),
-                reset_at=retry.reset_at if retry is not None else None,
-            )
-            if isinstance(mapped_error, ProviderServiceInvalidResponseError):
-                raise ProviderServiceInvalidResponseError(
-                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
-                )
-            raise mapped_error
+            raise_mapped_provider_error(response, request_id=request_id)
 
         if response.status_code != 200:
             raise ProviderServiceInvalidResponseError(

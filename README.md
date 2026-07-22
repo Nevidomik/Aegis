@@ -246,7 +246,8 @@ is forwarded.
 UI Service runs as `aegis` through `aegis-ui.service`, listens on
 `0.0.0.0:8000`, and calls History at `http://192.168.56.11:8002`. Its protected
 `/etc/aegis/ui.env` contains only `HISTORY_SERVICE_URL` and
-`HISTORY_TIMEOUT_SECONDS`; it contains no Provider URL, AbuseIPDB key, or
+phase-specific `HISTORY_*_TIMEOUT_SECONDS`; it contains no Provider URL,
+AbuseIPDB key, or
 MariaDB settings. The server-rendered UI continues to keep internal service
 URLs out of browser-side JavaScript.
 

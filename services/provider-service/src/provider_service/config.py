@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     abuseipdb_read_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     abuseipdb_write_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     abuseipdb_pool_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    abuseipdb_operation_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
 
     @field_validator("abuseipdb_base_url")
     @classmethod

@@ -6,9 +6,12 @@ from typing import Literal
 
 SchedulingReason = Literal[
     "base_interval",
+    "quota_retry_after",
     "quota_reset",
+    "quota_constraints",
     "rate_limit_retry_after",
     "rate_limit_reset",
+    "rate_limit_constraints",
     "rate_limit_fallback",
     "temporary_backoff_5m",
     "temporary_backoff_15m",
@@ -67,15 +70,25 @@ class BlacklistNextAttemptPolicy:
         *,
         remaining: int | None,
         reset_at: datetime | None,
+        retry_after_seconds: int | None = None,
         jitter_seconds: int = 0,
     ) -> NextAttemptDecision:
         finished = self._utc(finished_at)
         reset = self._optional_utc(reset_at)
         candidate = finished + self.interval
         reason: SchedulingReason = "base_interval"
-        if remaining == 0 and reset is not None and reset > candidate:
-            candidate = reset
-            reason = "quota_reset"
+        retry_at = self._retry_at(finished, retry_after_seconds)
+        if remaining == 0:
+            constraints = [value for value in (retry_at, reset) if value is not None]
+            constrained = max([candidate, *constraints])
+            if constrained > candidate:
+                candidate = constrained
+                if retry_at is not None and reset is not None:
+                    reason = "quota_constraints"
+                elif retry_at is not None:
+                    reason = "quota_retry_after"
+                else:
+                    reason = "quota_reset"
         return self._decision(candidate, reason, jitter_seconds)
 
     def after_rate_limit(
@@ -88,14 +101,18 @@ class BlacklistNextAttemptPolicy:
     ) -> NextAttemptDecision:
         finished = self._utc(finished_at)
         reset = self._optional_utc(reset_at)
-        if retry_after_seconds is not None:
-            if retry_after_seconds < 0:
-                raise ValueError("retry_after_seconds cannot be negative.")
-            candidate = finished + timedelta(seconds=retry_after_seconds)
-            reason: SchedulingReason = "rate_limit_retry_after"
-        elif reset is not None:
-            candidate = max(finished, reset)
-            reason = "rate_limit_reset"
+        retry_at = self._retry_at(finished, retry_after_seconds)
+        if retry_at is not None or reset is not None:
+            candidate = max(
+                finished,
+                *[value for value in (retry_at, reset) if value is not None],
+            )
+            if retry_at is not None and reset is not None:
+                reason: SchedulingReason = "rate_limit_constraints"
+            elif retry_at is not None:
+                reason = "rate_limit_retry_after"
+            else:
+                reason = "rate_limit_reset"
         else:
             candidate = finished + self.rate_limit_fallback
             reason = "rate_limit_fallback"
@@ -152,6 +169,16 @@ class BlacklistNextAttemptPolicy:
             next_attempt_at=candidate + timedelta(seconds=jitter_seconds),
             reason=reason,
         )
+
+    @staticmethod
+    def _retry_at(
+        finished_at: datetime, retry_after_seconds: int | None
+    ) -> datetime | None:
+        if retry_after_seconds is None:
+            return None
+        if retry_after_seconds < 0:
+            raise ValueError("retry_after_seconds cannot be negative.")
+        return finished_at + timedelta(seconds=retry_after_seconds)
 
     @staticmethod
     def _utc(value: datetime) -> datetime:

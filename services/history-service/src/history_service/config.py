@@ -25,13 +25,17 @@ class Settings(BaseSettings):
     mariadb_user: str
     mariadb_password: SecretStr
     provider_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8001")
-    provider_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    provider_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    provider_read_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    provider_write_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    provider_pool_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     blacklist_confidence_minimum: int = Field(default=90, ge=0, le=100)
     blacklist_scheduler_enabled: bool = False
     blacklist_sync_interval_seconds: int = Field(default=21600, ge=60)
     blacklist_stale_after_seconds: int = Field(default=43200, ge=60)
     blacklist_maximum_temporary_attempts: int = Field(default=4, ge=0, le=4)
     blacklist_maximum_jitter_seconds: int = Field(default=30, ge=0, le=300)
+    blacklist_sync_deadline_seconds: float = Field(default=30.0, gt=0, le=300)
 
     def database_url(self) -> URL:
         """Build a safely escaped MariaDB connection URL."""
@@ -49,4 +53,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return the process-wide settings instance."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

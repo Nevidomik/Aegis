@@ -6,9 +6,16 @@ import pytest
 from history_service.blacklist_read import get_blacklist_read_service
 from history_service.provider_client import get_provider_client
 from history_service.schemas import (
+    BlacklistAnalyticsResponse,
+    BlacklistAnalyticsSnapshot,
+    BlacklistCountryCount,
+    BlacklistCountryDistribution,
     BlacklistEntryResponse,
+    BlacklistIpVersionCount,
     BlacklistLastError,
     BlacklistPage,
+    BlacklistScoreBucket,
+    BlacklistSnapshotChurn,
     BlacklistSnapshotList,
     BlacklistSnapshotSummary,
     BlacklistStatusResponse,
@@ -49,6 +56,38 @@ def page() -> BlacklistPage:
     )
 
 
+def analytics() -> BlacklistAnalyticsResponse:
+    return BlacklistAnalyticsResponse(
+        latest_snapshot=BlacklistAnalyticsSnapshot(
+            snapshot_id=42,
+            provider_generated_at=NOW,
+            confidence_minimum=90,
+            requested_limit=1000,
+            returned_count=1000,
+            result_limit_reached=True,
+        ),
+        score_distribution=[BlacklistScoreBucket(minimum=100, maximum=100, count=1000)],
+        top_countries=BlacklistCountryDistribution(
+            items=[BlacklistCountryCount(country_code="US", count=600)],
+            unknown_count=100,
+            other_count=300,
+        ),
+        ip_versions=[
+            BlacklistIpVersionCount(ip_version=4, count=900),
+            BlacklistIpVersionCount(ip_version=6, count=100),
+        ],
+        snapshot_churn=[
+            BlacklistSnapshotChurn(
+                current_snapshot_id=42,
+                previous_snapshot_id=41,
+                added=20,
+                removed=10,
+                retained=980,
+            )
+        ],
+    )
+
+
 @pytest.mark.anyio
 async def test_blacklist_read_endpoints_never_call_provider(
     client: AsyncClient, override_dependency: Any
@@ -67,6 +106,7 @@ async def test_blacklist_read_endpoints_never_call_provider(
         items=[summary()], limit=20, offset=0, total=1
     )
     service.snapshot.return_value = page()
+    service.analytics.return_value = analytics()
     provider = Mock()
     override_dependency(get_blacklist_read_service, service)
     override_dependency(get_provider_client, provider)
@@ -83,12 +123,17 @@ async def test_blacklist_read_endpoints_never_call_provider(
             "/api/v1/blacklist/snapshots/42",
             headers={"X-Request-ID": REQUEST_ID},
         ),
+        await client.get(
+            "/api/v1/blacklist/analytics?pair_limit=10",
+            headers={"X-Request-ID": REQUEST_ID},
+        ),
     ]
 
-    assert [response.status_code for response in responses] == [200, 200, 200, 200]
+    assert [response.status_code for response in responses] == [200] * 5
     assert all(response.headers["X-Request-ID"] == REQUEST_ID for response in responses)
     provider.check.assert_not_called()
     provider.get_blacklist.assert_not_called()
+    service.analytics.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -140,6 +185,46 @@ async def test_blacklist_snapshot_list_query_validation(
 ) -> None:
     response = await client.get(f"/api/v1/blacklist/snapshots?{query}")
     assert response.status_code == 422
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("pair_limit", [0, 31])
+async def test_blacklist_analytics_pair_limit_is_bounded(
+    client: AsyncClient, pair_limit: int
+) -> None:
+    response = await client.get(f"/api/v1/blacklist/analytics?pair_limit={pair_limit}")
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.anyio
+async def test_blacklist_analytics_contract_has_stable_ordered_fields(
+    client: AsyncClient, override_dependency: Any
+) -> None:
+    service = Mock()
+    service.analytics.return_value = analytics()
+    override_dependency(get_blacklist_read_service, service)
+
+    response = await client.get(
+        "/api/v1/blacklist/analytics?pair_limit=3",
+        headers={"X-Request-ID": REQUEST_ID},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    body = response.json()
+    assert body["latest_snapshot"]["result_limit_reached"] is True
+    assert body["top_countries"] == {
+        "items": [{"country_code": "US", "count": 600}],
+        "unknown_count": 100,
+        "other_count": 300,
+    }
+    assert body["ip_versions"] == [
+        {"ip_version": 4, "count": 900},
+        {"ip_version": 6, "count": 100},
+    ]
+    assert body["snapshot_churn"][0]["current_snapshot_id"] == 42
+    service.analytics.assert_called_once()
 
 
 def test_status_error_model_contains_only_safe_summary() -> None:

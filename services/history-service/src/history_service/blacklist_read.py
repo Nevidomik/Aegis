@@ -10,11 +10,19 @@ from history_service.blacklist_repository import BlacklistRepository
 from history_service.config import get_settings
 from history_service.models import BlacklistSnapshot, BlacklistSyncRun
 from history_service.schemas import (
+    BlacklistAnalyticsQuery,
+    BlacklistAnalyticsResponse,
+    BlacklistAnalyticsSnapshot,
+    BlacklistCountryCount,
+    BlacklistCountryDistribution,
     BlacklistEntryPageQuery,
     BlacklistEntryQuery,
     BlacklistEntryResponse,
+    BlacklistIpVersionCount,
     BlacklistLastError,
     BlacklistPage,
+    BlacklistScoreBucket,
+    BlacklistSnapshotChurn,
     BlacklistSnapshotList,
     BlacklistSnapshotListQuery,
     BlacklistSnapshotSummary,
@@ -23,6 +31,8 @@ from history_service.schemas import (
 from history_service.service import HistoryUnavailableError
 
 FAILED_SYNC_STATUSES = {"failed", "rate_limited"}
+SCORE_BUCKET_MINIMUMS = (*range(0, 100, 10), 95, 100)
+TOP_COUNTRY_LIMIT = 5
 
 
 class BlacklistReadService:
@@ -86,6 +96,116 @@ class BlacklistReadService:
             return self._page(session, snapshot, query)
         except SQLAlchemyError as error:
             raise HistoryUnavailableError from error
+
+    def analytics(
+        self, session: Session, query: BlacklistAnalyticsQuery
+    ) -> BlacklistAnalyticsResponse:
+        """Aggregate bounded accepted-snapshot analytics from MariaDB only."""
+        try:
+            snapshot = self.repository.get_latest_snapshot(session)
+            if snapshot is None:
+                return self._empty_analytics()
+
+            score_counts = {
+                item.minimum: item.count
+                for item in self.repository.score_distribution(
+                    session, snapshot_id=snapshot.snapshot_id
+                )
+            }
+            countries = self.repository.country_distribution(
+                session, snapshot_id=snapshot.snapshot_id
+            )
+            version_counts = {
+                item.ip_version: item.count
+                for item in self.repository.ip_version_distribution(
+                    session, snapshot_id=snapshot.snapshot_id
+                )
+            }
+            churn = self.repository.snapshot_churn(
+                session,
+                provider=snapshot.provider,
+                pair_limit=query.pair_limit,
+            )
+        except SQLAlchemyError as error:
+            raise HistoryUnavailableError from error
+
+        known_countries = [item for item in countries if item.country_code is not None]
+        top_countries = known_countries[:TOP_COUNTRY_LIMIT]
+        return BlacklistAnalyticsResponse(
+            latest_snapshot=BlacklistAnalyticsSnapshot(
+                snapshot_id=snapshot.snapshot_id,
+                provider_generated_at=self._utc(snapshot.provider_generated_at),
+                confidence_minimum=snapshot.confidence_minimum,
+                requested_limit=snapshot.requested_limit,
+                returned_count=snapshot.returned_count,
+                result_limit_reached=(
+                    snapshot.returned_count == snapshot.requested_limit
+                ),
+            ),
+            score_distribution=[
+                BlacklistScoreBucket(
+                    minimum=minimum,
+                    maximum=self._score_bucket_maximum(minimum),
+                    count=score_counts.get(minimum, 0),
+                )
+                for minimum in SCORE_BUCKET_MINIMUMS
+            ],
+            top_countries=BlacklistCountryDistribution(
+                items=[
+                    BlacklistCountryCount(
+                        country_code=item.country_code,
+                        count=item.count,
+                    )
+                    for item in top_countries
+                    if item.country_code is not None
+                ],
+                unknown_count=sum(
+                    item.count for item in countries if item.country_code is None
+                ),
+                other_count=sum(
+                    item.count for item in known_countries[TOP_COUNTRY_LIMIT:]
+                ),
+            ),
+            ip_versions=[
+                BlacklistIpVersionCount(
+                    ip_version=ip_version,
+                    count=version_counts.get(ip_version, 0),
+                )
+                for ip_version in (4, 6)
+            ],
+            snapshot_churn=[
+                BlacklistSnapshotChurn(
+                    current_snapshot_id=item.current_snapshot_id,
+                    previous_snapshot_id=item.previous_snapshot_id,
+                    added=item.added,
+                    removed=item.removed,
+                    retained=item.retained,
+                )
+                for item in churn
+            ],
+        )
+
+    @staticmethod
+    def _empty_analytics() -> BlacklistAnalyticsResponse:
+        return BlacklistAnalyticsResponse(
+            latest_snapshot=None,
+            score_distribution=[],
+            top_countries=BlacklistCountryDistribution(
+                items=[], unknown_count=0, other_count=0
+            ),
+            ip_versions=[],
+            snapshot_churn=[],
+        )
+
+    @staticmethod
+    def _score_bucket_maximum(minimum: int) -> int:
+        if minimum == 100:
+            return 100
+        if minimum == 95:
+            return 99
+        if minimum == 90:
+            return 94
+        return minimum + 9
 
     def _page(
         self,

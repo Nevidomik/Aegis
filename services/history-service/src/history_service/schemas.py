@@ -484,3 +484,110 @@ class BlacklistStatusResponse(BaseModel):
     rate_limit_reset_at: datetime | None = None
     data_stale: StrictBool
     last_error: BlacklistLastError | None = None
+
+
+class BlacklistAnalyticsQuery(BaseModel):
+    """Bounded query for accepted-snapshot churn analytics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pair_limit: int = Field(default=10, ge=1, le=30)
+
+
+class BlacklistAnalyticsSnapshot(BaseModel):
+    """Latest accepted snapshot represented in the analytics response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: StrictInt = Field(gt=0)
+    provider_generated_at: datetime
+    confidence_minimum: StrictInt = Field(ge=0, le=100)
+    requested_limit: StrictInt = Field(ge=1, le=1000)
+    returned_count: StrictInt = Field(ge=0, le=1000)
+    result_limit_reached: StrictBool
+
+
+class BlacklistScoreBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    minimum: StrictInt = Field(ge=0, le=100)
+    maximum: StrictInt = Field(ge=0, le=100)
+    count: StrictInt = Field(ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> Self:
+        if self.maximum < self.minimum:
+            raise ValueError("Score bucket maximum cannot be below its minimum.")
+        return self
+
+
+class BlacklistCountryCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country_code: StrictStr = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+    count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistCountryDistribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BlacklistCountryCount] = Field(max_length=10)
+    unknown_count: StrictInt = Field(ge=0, le=1000)
+    other_count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistIpVersionCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ip_version: Literal[4, 6]
+    count: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistSnapshotChurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_snapshot_id: StrictInt = Field(gt=0)
+    previous_snapshot_id: StrictInt = Field(gt=0)
+    added: StrictInt = Field(ge=0, le=1000)
+    removed: StrictInt = Field(ge=0, le=1000)
+    retained: StrictInt = Field(ge=0, le=1000)
+
+
+class BlacklistAnalyticsResponse(BaseModel):
+    """Database-derived analytics over bounded accepted blacklist snapshots."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latest_snapshot: BlacklistAnalyticsSnapshot | None
+    score_distribution: list[BlacklistScoreBucket] = Field(max_length=12)
+    top_countries: BlacklistCountryDistribution
+    ip_versions: list[BlacklistIpVersionCount] = Field(max_length=2)
+    snapshot_churn: list[BlacklistSnapshotChurn] = Field(max_length=30)
+
+    @model_validator(mode="after")
+    def validate_latest_totals(self) -> Self:
+        if self.latest_snapshot is None:
+            if (
+                self.score_distribution
+                or self.top_countries.items
+                or self.top_countries.unknown_count
+                or self.top_countries.other_count
+                or self.ip_versions
+                or self.snapshot_churn
+            ):
+                raise ValueError("Empty analytics cannot contain snapshot data.")
+            return self
+
+        expected = self.latest_snapshot.returned_count
+        if sum(item.count for item in self.score_distribution) != expected:
+            raise ValueError("Score distribution must match the latest snapshot.")
+        if (
+            sum(item.count for item in self.top_countries.items)
+            + self.top_countries.unknown_count
+            + self.top_countries.other_count
+            != expected
+        ):
+            raise ValueError("Country distribution must match the latest snapshot.")
+        if sum(item.count for item in self.ip_versions) != expected:
+            raise ValueError("IP version distribution must match the latest snapshot.")
+        return self

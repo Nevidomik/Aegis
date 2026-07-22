@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import overload
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from history_service.models import (
@@ -15,9 +16,7 @@ from history_service.models import (
 TEMPORARY_SYNC_ERROR_CODES = {
     "PROVIDER_SERVICE_UNAVAILABLE",
     "UPSTREAM_UNAVAILABLE",
-    "PROVIDER_UNAVAILABLE",
     "UPSTREAM_TIMEOUT",
-    "PROVIDER_TIMEOUT",
     "DATABASE_UNAVAILABLE",
 }
 
@@ -29,6 +28,33 @@ class PersistedBlacklistSchedule:
     next_attempt_reason: str | None
     rate_limit_remaining: int | None
     rate_limit_reset_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ScoreBucketCount:
+    minimum: int
+    count: int
+
+
+@dataclass(frozen=True)
+class CountryCount:
+    country_code: str | None
+    count: int
+
+
+@dataclass(frozen=True)
+class IpVersionCount:
+    ip_version: int
+    count: int
+
+
+@dataclass(frozen=True)
+class SnapshotChurnCount:
+    current_snapshot_id: int
+    previous_snapshot_id: int
+    added: int
+    removed: int
+    retained: int
 
 
 class BlacklistRepository:
@@ -149,6 +175,188 @@ class BlacklistRepository:
         )
         return session.scalar(statement) or 0
 
+    def score_distribution(
+        self, session: Session, *, snapshot_id: int
+    ) -> list[ScoreBucketCount]:
+        bucket_minimum = case(
+            (BlacklistSnapshotEntry.abuse_confidence_score == 100, 100),
+            (BlacklistSnapshotEntry.abuse_confidence_score >= 95, 95),
+            else_=func.floor(BlacklistSnapshotEntry.abuse_confidence_score / 10) * 10,
+        ).label("bucket_minimum")
+        statement = (
+            select(bucket_minimum, func.count().label("entry_count"))
+            .where(BlacklistSnapshotEntry.snapshot_id == snapshot_id)
+            .group_by(bucket_minimum)
+            .order_by(bucket_minimum.asc())
+        )
+        return [
+            ScoreBucketCount(minimum=int(minimum), count=int(count))
+            for minimum, count in session.execute(statement)
+        ]
+
+    def country_distribution(
+        self, session: Session, *, snapshot_id: int
+    ) -> list[CountryCount]:
+        statement = (
+            select(
+                BlacklistSnapshotEntry.country_code,
+                func.count().label("entry_count"),
+            )
+            .where(BlacklistSnapshotEntry.snapshot_id == snapshot_id)
+            .group_by(BlacklistSnapshotEntry.country_code)
+            .order_by(
+                func.count().desc(),
+                BlacklistSnapshotEntry.country_code.asc(),
+            )
+        )
+        return [
+            CountryCount(country_code=country_code, count=int(count))
+            for country_code, count in session.execute(statement)
+        ]
+
+    def ip_version_distribution(
+        self, session: Session, *, snapshot_id: int
+    ) -> list[IpVersionCount]:
+        statement = (
+            select(
+                BlacklistSnapshotEntry.ip_version,
+                func.count().label("entry_count"),
+            )
+            .where(BlacklistSnapshotEntry.snapshot_id == snapshot_id)
+            .group_by(BlacklistSnapshotEntry.ip_version)
+            .order_by(BlacklistSnapshotEntry.ip_version.asc())
+        )
+        return [
+            IpVersionCount(ip_version=int(ip_version), count=int(count))
+            for ip_version, count in session.execute(statement)
+        ]
+
+    def snapshot_churn(
+        self, session: Session, *, provider: str, pair_limit: int
+    ) -> list[SnapshotChurnCount]:
+        recent = (
+            select(
+                BlacklistSnapshot.snapshot_id.label("current_snapshot_id"),
+                func.lead(BlacklistSnapshot.snapshot_id)
+                .over(order_by=BlacklistSnapshot.snapshot_id.desc())
+                .label("previous_snapshot_id"),
+            )
+            .where(BlacklistSnapshot.provider == provider)
+            .order_by(BlacklistSnapshot.snapshot_id.desc())
+            .limit(pair_limit + 1)
+            .cte("recent_analytics_snapshots")
+        )
+        pairs = (
+            select(recent.c.current_snapshot_id, recent.c.previous_snapshot_id)
+            .where(recent.c.previous_snapshot_id.is_not(None))
+            .limit(pair_limit)
+            .cte("analytics_snapshot_pairs")
+        )
+        current_entry = BlacklistSnapshotEntry.__table__.alias("current_entry")
+        previous_match = BlacklistSnapshotEntry.__table__.alias("previous_match")
+        previous_entry = BlacklistSnapshotEntry.__table__.alias("previous_entry")
+        current_match = BlacklistSnapshotEntry.__table__.alias("current_match")
+
+        current_counts = (
+            select(
+                pairs.c.current_snapshot_id,
+                pairs.c.previous_snapshot_id,
+                func.sum(
+                    case(
+                        (
+                            current_entry.c.entry_id.is_not(None)
+                            & previous_match.c.entry_id.is_(None),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("added"),
+                func.sum(
+                    case(
+                        (previous_match.c.entry_id.is_not(None), 1),
+                        else_=0,
+                    )
+                ).label("retained"),
+            )
+            .select_from(
+                pairs.outerjoin(
+                    current_entry,
+                    current_entry.c.snapshot_id == pairs.c.current_snapshot_id,
+                ).outerjoin(
+                    previous_match,
+                    (previous_match.c.snapshot_id == pairs.c.previous_snapshot_id)
+                    & (previous_match.c.ip_address == current_entry.c.ip_address),
+                )
+            )
+            .group_by(pairs.c.current_snapshot_id, pairs.c.previous_snapshot_id)
+            .cte("analytics_current_counts")
+        )
+        removed_counts = (
+            select(
+                pairs.c.current_snapshot_id,
+                pairs.c.previous_snapshot_id,
+                func.sum(
+                    case(
+                        (
+                            previous_entry.c.entry_id.is_not(None)
+                            & current_match.c.entry_id.is_(None),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("removed"),
+            )
+            .select_from(
+                pairs.outerjoin(
+                    previous_entry,
+                    previous_entry.c.snapshot_id == pairs.c.previous_snapshot_id,
+                ).outerjoin(
+                    current_match,
+                    (current_match.c.snapshot_id == pairs.c.current_snapshot_id)
+                    & (current_match.c.ip_address == previous_entry.c.ip_address),
+                )
+            )
+            .group_by(pairs.c.current_snapshot_id, pairs.c.previous_snapshot_id)
+            .cte("analytics_removed_counts")
+        )
+        statement = (
+            select(
+                current_counts.c.current_snapshot_id,
+                current_counts.c.previous_snapshot_id,
+                current_counts.c.added,
+                removed_counts.c.removed,
+                current_counts.c.retained,
+            )
+            .join(
+                removed_counts,
+                (
+                    removed_counts.c.current_snapshot_id
+                    == current_counts.c.current_snapshot_id
+                )
+                & (
+                    removed_counts.c.previous_snapshot_id
+                    == current_counts.c.previous_snapshot_id
+                ),
+            )
+            .order_by(current_counts.c.current_snapshot_id.desc())
+        )
+        return [
+            SnapshotChurnCount(
+                current_snapshot_id=int(current_snapshot_id),
+                previous_snapshot_id=int(previous_snapshot_id),
+                added=int(added or 0),
+                removed=int(removed or 0),
+                retained=int(retained or 0),
+            )
+            for (
+                current_snapshot_id,
+                previous_snapshot_id,
+                added,
+                removed,
+                retained,
+            ) in session.execute(statement)
+        ]
+
     @staticmethod
     def _filter_entries(
         statement,
@@ -239,6 +447,14 @@ class BlacklistRepository:
             rate_limit_remaining=run.rate_limit_remaining,
             rate_limit_reset_at=self._as_aware_utc(run.rate_limit_reset_at),
         )
+
+    @staticmethod
+    @overload
+    def _as_mariadb_utc(value: datetime) -> datetime: ...
+
+    @staticmethod
+    @overload
+    def _as_mariadb_utc(value: None) -> None: ...
 
     @staticmethod
     def _as_mariadb_utc(value: datetime | None) -> datetime | None:

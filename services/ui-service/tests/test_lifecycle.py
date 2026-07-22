@@ -8,7 +8,10 @@ from ui_service.main import app, create_history_http_client, lifespan
 def settings() -> Settings:
     return Settings(
         history_service_url="http://history.test",
-        history_timeout_seconds=3,
+        history_connect_timeout_seconds=1,
+        history_read_timeout_seconds=2,
+        history_write_timeout_seconds=3,
+        history_pool_timeout_seconds=4,
     )
 
 
@@ -17,7 +20,10 @@ async def test_history_http_client_configuration() -> None:
     client = create_history_http_client(settings())
     try:
         assert client.base_url == httpx.URL("http://history.test")
-        assert client.timeout.connect == 3
+        assert client.timeout.connect == 1
+        assert client.timeout.read == 2
+        assert client.timeout.write == 3
+        assert client.timeout.pool == 4
         assert client.follow_redirects is False
     finally:
         await client.aclose()

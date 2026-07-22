@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     )
 
     history_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8002")
-    history_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    history_connect_timeout_seconds: float = Field(default=3.0, gt=0, le=60)
+    history_read_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    history_write_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    history_pool_timeout_seconds: float = Field(default=3.0, gt=0, le=60)
+    history_operation_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
 
 @lru_cache

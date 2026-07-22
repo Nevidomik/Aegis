@@ -30,7 +30,7 @@ class AbuseIPDBAuthenticationError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
             status_code=503,
-            code="ABUSEIPDB_AUTHENTICATION_FAILED",
+            code="UPSTREAM_AUTHENTICATION_FAILED",
             message="The reputation provider rejected its credentials.",
         )
 
@@ -64,7 +64,7 @@ class AbuseIPDBUnavailableError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
             status_code=503,
-            code="ABUSEIPDB_UNAVAILABLE",
+            code="UPSTREAM_UNAVAILABLE",
             message="The reputation provider is temporarily unavailable.",
         )
 

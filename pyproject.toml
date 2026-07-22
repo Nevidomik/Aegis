@@ -21,6 +21,16 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+# A combined path scan cannot disambiguate the three independent top-level
+# `tests` packages. scripts/typecheck.sh checks each excluded tree separately.
+exclude = [
+  "^services/history-service/tests/",
+  "^services/provider-service/tests/",
+  "^services/ui-service/tests/",
+]
+
 [tool.uv.workspace]
 members = ["services/*-service"]
 

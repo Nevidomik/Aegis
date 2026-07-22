@@ -43,6 +43,7 @@ trap 'rm -f "${temporary_environment}" "${temporary_service}" "${API_KEY_FILE}"'
   printf 'ABUSEIPDB_READ_TIMEOUT_SECONDS=10\n'
   printf 'ABUSEIPDB_WRITE_TIMEOUT_SECONDS=5\n'
   printf 'ABUSEIPDB_POOL_TIMEOUT_SECONDS=5\n'
+  printf 'ABUSEIPDB_OPERATION_TIMEOUT_SECONDS=20\n'
 } >"${temporary_environment}"
 install -o root -g aegis -m 0640 "${temporary_environment}" "${ENVIRONMENT_FILE}"
 
@@ -60,7 +61,7 @@ User=aegis
 Group=aegis
 WorkingDirectory=${SERVICE_DIRECTORY}
 EnvironmentFile=${ENVIRONMENT_FILE}
-ExecStart=${VENV_DIRECTORY}/bin/uvicorn provider_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host ${PROVIDER_ADDRESS} --port ${PROVIDER_PORT}
+ExecStart=${VENV_DIRECTORY}/bin/uvicorn provider_service.main:app --app-dir ${SERVICE_DIRECTORY}/src --host ${PROVIDER_ADDRESS} --port ${PROVIDER_PORT} --no-access-log
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
@@ -82,7 +83,7 @@ wait_for_health() {
   local attempts=30
 
   while (( attempts > 0 )); do
-    if curl --fail --silent --show-error \
+    if curl --fail --silent --show-error --connect-timeout 2 --max-time 3 \
       "http://${PROVIDER_ADDRESS}:${PROVIDER_PORT}${path}" >/dev/null 2>&1; then
       return 0
     fi

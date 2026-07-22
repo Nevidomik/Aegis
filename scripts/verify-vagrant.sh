@@ -65,7 +65,7 @@ check() {
 vm_is_running() {
   local vm="$1"
   local state
-  state="$(vagrant status "${vm}" --machine-readable 2>/dev/null | \
+  state="$(timeout 30 vagrant status "${vm}" --machine-readable 2>/dev/null | \
     awk -F, '$3 == "state" { print $4; exit }')"
   [[ "${state}" == "running" ]]
 }
@@ -78,20 +78,22 @@ private_ip_responds() {
 guest_http_ok() {
   local vm="$1"
   local url="$2"
-  vagrant ssh "${vm}" -c "curl --fail --silent --show-error '${url}'"
+  timeout 30 vagrant ssh "${vm}" -c \
+    "curl --fail --silent --show-error --connect-timeout 3 --max-time 10 '${url}'"
 }
 
 unit_is_active() {
   local vm="$1"
   local unit="$2"
-  vagrant ssh "${vm}" -c "sudo systemctl is-active --quiet '${unit}'"
+  timeout 30 vagrant ssh "${vm}" -c \
+    "sudo systemctl is-active --quiet '${unit}'"
 }
 
 unit_runs_as_aegis() {
   local vm="$1"
   local unit="$2"
   local owner
-  owner="$(vagrant ssh "${vm}" -c \
+  owner="$(timeout 30 vagrant ssh "${vm}" -c \
     "pid=\$(sudo systemctl show --property MainPID --value '${unit}'); test \"\${pid}\" -gt 0; ps -o user= -p \"\${pid}\"" \
     2>/dev/null | tr -d '[:space:]')"
   [[ "${owner}" == "aegis" ]]
@@ -100,7 +102,7 @@ unit_runs_as_aegis() {
 no_root_application_process() {
   local vm="$1"
   local entry_point="$2"
-  vagrant ssh "${vm}" -c \
+  timeout 30 vagrant ssh "${vm}" -c \
     "ps -eo user=,args= | awk '\$1 == \"root\" && index(\$0, \"${entry_point}\") { found=1 } END { exit found }'"
 }
 
@@ -126,13 +128,13 @@ check "History liveness" guest_http_ok history-vm \
   http://192.168.100.11:8002/health/live
 check "History readiness" guest_http_ok history-vm \
   http://192.168.100.11:8002/health/ready
-check "UI liveness" curl --fail --silent --show-error \
+check "UI liveness" curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
   http://192.168.100.10:8000/health/live
-check "UI readiness" curl --fail --silent --show-error \
+check "UI readiness" curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
   http://192.168.100.10:8000/health/ready
-check "UI main page from host" curl --fail --silent --show-error \
+check "UI main page from host" curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
   http://192.168.100.10:8000/
-check "UI blacklist page from host" curl --fail --silent --show-error \
+check "UI blacklist page from host" curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
   http://192.168.100.10:8000/blacklist
 check "History blacklist status" guest_http_ok ui-vm \
   http://192.168.100.11:8002/api/v1/blacklist/status
@@ -176,8 +178,8 @@ PY
   )"; then
     request_id="$(< /proc/sys/kernel/random/uuid)"
     check "Live AbuseIPDB reputation request for ${canonical_ip}" \
-      vagrant ssh ui-vm -c \
-      "curl --fail --silent --show-error -X POST \
+      timeout 45 vagrant ssh ui-vm -c \
+      "curl --fail --silent --show-error --connect-timeout 3 --max-time 30 -X POST \
         -H 'Content-Type: application/json' \
         -H 'X-Request-ID: ${request_id}' \
         --data '{\"ip_address\":\"${canonical_ip}\",\"max_age_days\":30}' \

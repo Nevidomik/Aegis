@@ -61,10 +61,15 @@ def test_success_branches(
         (
             3600,
             FINISHED + timedelta(hours=8),
-            FINISHED + timedelta(hours=1),
-            "rate_limit_retry_after",
+            FINISHED + timedelta(hours=8),
+            "rate_limit_constraints",
         ),
-        (0, FINISHED + timedelta(hours=8), FINISHED, "rate_limit_retry_after"),
+        (
+            0,
+            FINISHED + timedelta(hours=8),
+            FINISHED + timedelta(hours=8),
+            "rate_limit_constraints",
+        ),
         (
             None,
             FINISHED + timedelta(hours=8),
@@ -90,6 +95,124 @@ def test_rate_limit_priority(
     )
     assert decision.next_attempt_at == expected
     assert decision.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("remaining", "retry_after", "reset_at", "expected", "reason"),
+    [
+        (
+            4,
+            36000,
+            FINISHED + timedelta(hours=12),
+            FINISHED + timedelta(hours=6),
+            "base_interval",
+        ),
+        (
+            0,
+            3600,
+            None,
+            FINISHED + timedelta(hours=6),
+            "base_interval",
+        ),
+        (
+            0,
+            28800,
+            None,
+            FINISHED + timedelta(hours=8),
+            "quota_retry_after",
+        ),
+        (
+            0,
+            None,
+            FINISHED + timedelta(hours=8),
+            FINISHED + timedelta(hours=8),
+            "quota_reset",
+        ),
+        (
+            0,
+            25200,
+            FINISHED + timedelta(hours=8),
+            FINISHED + timedelta(hours=8),
+            "quota_constraints",
+        ),
+        (
+            0,
+            0,
+            FINISHED - timedelta(minutes=1),
+            FINISHED + timedelta(hours=6),
+            "base_interval",
+        ),
+    ],
+)
+def test_success_rate_limit_metadata_combinations(
+    policy: BlacklistNextAttemptPolicy,
+    remaining: int,
+    retry_after: int | None,
+    reset_at: datetime | None,
+    expected: datetime,
+    reason: str,
+) -> None:
+    decision = policy.after_success(
+        FINISHED,
+        remaining=remaining,
+        retry_after_seconds=retry_after,
+        reset_at=reset_at,
+        jitter_seconds=0,
+    )
+    assert decision.next_attempt_at == expected
+    assert decision.reason == reason
+
+
+def test_rate_limit_uses_later_retry_after_when_reset_is_earlier(
+    policy: BlacklistNextAttemptPolicy,
+) -> None:
+    decision = policy.after_rate_limit(
+        FINISHED,
+        retry_after_seconds=3600,
+        reset_at=FINISHED + timedelta(minutes=30),
+    )
+    assert decision.next_attempt_at == FINISHED + timedelta(hours=1)
+    assert decision.reason == "rate_limit_constraints"
+
+
+def test_rate_limit_jitter_is_added_after_all_not_before_constraints(
+    policy: BlacklistNextAttemptPolicy,
+) -> None:
+    reset_at = FINISHED + timedelta(hours=8)
+    decision = policy.after_rate_limit(
+        FINISHED,
+        retry_after_seconds=3600,
+        reset_at=reset_at,
+        jitter_seconds=30,
+    )
+    assert decision.next_attempt_at == reset_at + timedelta(seconds=30)
+    assert decision.next_attempt_at >= reset_at
+
+
+def test_future_reset_is_honored_across_clock_skew(
+    policy: BlacklistNextAttemptPolicy,
+) -> None:
+    provider_clock_ahead = FINISHED + timedelta(days=1)
+    decision = policy.after_rate_limit(
+        FINISHED,
+        retry_after_seconds=60,
+        reset_at=provider_clock_ahead,
+        jitter_seconds=0,
+    )
+    assert decision.next_attempt_at == provider_clock_ahead
+
+
+def test_past_reset_is_clamped_to_completion_time(
+    policy: BlacklistNextAttemptPolicy,
+) -> None:
+    decision = policy.after_rate_limit(
+        FINISHED,
+        retry_after_seconds=None,
+        reset_at=FINISHED - timedelta(days=1),
+        jitter_seconds=0,
+    )
+    assert decision.next_attempt_at == FINISHED
+    assert decision.reason == "rate_limit_reset"
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -18,10 +19,12 @@ from history_service.exceptions import (
 from history_service.models import BlacklistSnapshot, BlacklistSyncRun
 from history_service.schemas import ProviderBlacklistResponse
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 REQUEST_ID = UUID("6f5aa064-43e8-4dbb-a544-d60b68af5cbd")
 STARTED = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 FINISHED = datetime(2026, 7, 22, 12, 0, 2, tzinfo=UTC)
+DATABASE_SECRET = "TEST_DATABASE_PASSWORD_DO_NOT_LOG"
 
 
 class FakeSession:
@@ -142,6 +145,7 @@ def response(
     addresses: list[str] | None = None,
     remaining: int | None = 4,
     reset_at: datetime | None = None,
+    retry_after_seconds: int | None = None,
 ) -> ProviderBlacklistResponse:
     addresses = addresses if addresses is not None else ["8.8.8.8"]
     return ProviderBlacklistResponse.model_validate(
@@ -154,7 +158,7 @@ def response(
                 "limit": 5,
                 "remaining": remaining,
                 "reset_at": reset_at,
-                "retry_after_seconds": None,
+                "retry_after_seconds": retry_after_seconds,
             },
             "items": [
                 {
@@ -178,7 +182,7 @@ def build_service(
     state = {"commits": 0, "rollbacks": 0}
     times = iter([STARTED, FINISHED, FINISHED + timedelta(seconds=1)])
     service = BlacklistSyncService(
-        session_factory=lambda: FakeSession(state),  # type: ignore[arg-type]
+        session_factory=cast(Callable[[], Session], lambda: FakeSession(state)),
         sync_lock=lock or FakeLock(),
         confidence_minimum=90,
         repository=repository,
@@ -263,10 +267,10 @@ def test_duplicate_snapshot_reuses_existing_snapshot_without_entries() -> None:
         (
             ApplicationError(
                 status_code=504,
-                code="PROVIDER_TIMEOUT",
-                message="provider timeout details",
+                code="UPSTREAM_TIMEOUT",
+                message=f"password={DATABASE_SECRET}",
             ),
-            "PROVIDER_TIMEOUT",
+            "UPSTREAM_TIMEOUT",
             timedelta(minutes=5),
         ),
     ],
@@ -296,7 +300,7 @@ def test_provider_failures_preserve_snapshots_and_store_safe_error(
     assert len(repository.snapshots) == 1
     run = repository.runs[1]
     assert run.error_code == expected_code
-    assert "secret" not in (run.error_message or "")
+    assert DATABASE_SECRET not in (run.error_message or "")
     assert run.next_attempt_at == (FINISHED + expected_delay).replace(tzinfo=None)
 
 
@@ -326,10 +330,13 @@ def test_rate_limit_preserves_retry_after_and_calculates_next_attempt() -> None:
     result = service.run_once(FakeProvider(error=error))
 
     assert result.status == "rate_limited"
-    assert result.next_attempt_at == FINISHED + timedelta(hours=1)
+    assert result.next_attempt_at == error.reset_at
+    assert result.next_attempt_reason == "rate_limit_constraints"
     run = repository.runs[1]
     assert run.retry_after_seconds == 3600
     assert run.rate_limit_reset_at == error.reset_at.replace(tzinfo=None)
+    assert run.next_attempt_at == error.reset_at.replace(tzinfo=None)
+    assert run.next_attempt_reason == "rate_limit_constraints"
     assert run.error_message != error.message
 
 
@@ -342,6 +349,26 @@ def test_zero_remaining_quota_respects_later_reset_time() -> None:
 
     assert result.next_attempt_at == reset_at
     assert repository.runs[1].rate_limit_remaining == 0
+
+
+def test_zero_remaining_quota_persists_all_success_constraints() -> None:
+    repository = FakeRepository()
+    reset_at = FINISHED + timedelta(hours=7)
+    service, _ = build_service(repository)
+    provider_response = response(
+        remaining=0,
+        reset_at=reset_at,
+        retry_after_seconds=8 * 60 * 60,
+    )
+
+    result = service.run_once(FakeProvider(provider_response))
+
+    expected = FINISHED + timedelta(hours=8)
+    run = repository.runs[1]
+    assert result.next_attempt_at == expected
+    assert result.next_attempt_reason == "quota_constraints"
+    assert run.next_attempt_at == expected.replace(tzinfo=None)
+    assert run.next_attempt_reason == "quota_constraints"
 
 
 def test_database_failure_rolls_back_partial_snapshot_and_finalizes_run() -> None:

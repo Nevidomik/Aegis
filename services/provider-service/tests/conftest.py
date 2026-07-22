@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
 import pytest
@@ -21,7 +21,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 @pytest.fixture
 def override_dependency() -> Iterator[Any]:
-    def apply(dependency: object, replacement: object) -> None:
+    def apply(dependency: Callable[..., Any], replacement: object) -> None:
         async def override() -> object:
             return replacement
 

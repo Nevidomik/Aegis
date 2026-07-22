@@ -17,7 +17,10 @@ def settings() -> Settings:
         mariadb_user="history",
         mariadb_password="secret",
         provider_service_url="http://provider.test",
-        provider_timeout_seconds=3,
+        provider_connect_timeout_seconds=1,
+        provider_read_timeout_seconds=2,
+        provider_write_timeout_seconds=3,
+        provider_pool_timeout_seconds=4,
         blacklist_scheduler_enabled=False,
     )
 
@@ -26,7 +29,10 @@ def test_provider_http_client_has_fixed_base_url_and_timeout() -> None:
     client = create_provider_http_client(settings())
     try:
         assert client.base_url == httpx.URL("http://provider.test")
-        assert client.timeout.connect == 3
+        assert client.timeout.connect == 1
+        assert client.timeout.read == 2
+        assert client.timeout.write == 3
+        assert client.timeout.pool == 4
         assert client.follow_redirects is False
     finally:
         client.close()
@@ -73,7 +79,7 @@ async def test_scheduler_starts_once_and_stops_cleanly_without_provider_call() -
 
     application = create_app(
         settings=configured,
-        scheduler_factory=lambda _settings, _provider: FakeScheduler(),  # type: ignore[arg-type]
+        scheduler_factory=lambda _settings, _provider: FakeScheduler(),
     )
 
     async with application.router.lifespan_context(application):

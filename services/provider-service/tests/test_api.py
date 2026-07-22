@@ -1,6 +1,9 @@
+from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 import pytest
+from fastapi import Request
 from httpx2 import AsyncClient
 from provider_service.exceptions import (
     AbuseIPDBAuthenticationError,
@@ -11,8 +14,32 @@ from provider_service.exceptions import (
     UpstreamTimeoutError,
 )
 from provider_service.provider import get_reputation_provider
+from provider_service.routes import unexpected_exception_handler
 
 REQUEST_ID = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
+API_SECRET = "TEST_ABUSEIPDB_SECRET_DO_NOT_LOG"
+DependencyOverride = Callable[[Callable[..., Any], object], None]
+
+
+@pytest.mark.anyio
+async def test_unexpected_error_response_hides_api_secret(caplog) -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/internal/v1/blacklist",
+            "headers": [],
+        }
+    )
+    request.state.request_id = UUID(REQUEST_ID)
+
+    response = await unexpected_exception_handler(
+        request, RuntimeError(f"api_key={API_SECRET}")
+    )
+
+    assert response.status_code == 500
+    assert API_SECRET not in bytes(response.body).decode()
+    assert API_SECRET not in caplog.text
 
 
 @pytest.mark.anyio
@@ -85,16 +112,16 @@ async def test_internal_reputation_check_rejects_invalid_contract(
         (
             AbuseIPDBAuthenticationError(),
             503,
-            "ABUSEIPDB_AUTHENTICATION_FAILED",
+            "UPSTREAM_AUTHENTICATION_FAILED",
         ),
-        (AbuseIPDBUnavailableError(), 503, "ABUSEIPDB_UNAVAILABLE"),
+        (AbuseIPDBUnavailableError(), 503, "UPSTREAM_UNAVAILABLE"),
         (UpstreamTimeoutError(), 504, "UPSTREAM_TIMEOUT"),
     ],
 )
 @pytest.mark.anyio
 async def test_internal_reputation_check_preserves_upstream_errors_and_request_id(
     client: AsyncClient,
-    override_dependency: object,
+    override_dependency: DependencyOverride,
     error: Exception,
     status_code: int,
     code: str,
@@ -103,7 +130,7 @@ async def test_internal_reputation_check_preserves_upstream_errors_and_request_i
         async def lookup(self, *_: object) -> object:
             raise error
 
-    override_dependency(get_reputation_provider, FailingProvider())  # type: ignore[operator]
+    override_dependency(get_reputation_provider, FailingProvider())
     response = await client.post(
         "/internal/v1/reputation-checks",
         json={"ip_address": "8.8.8.8", "max_age_days": 30},
@@ -115,6 +142,44 @@ async def test_internal_reputation_check_preserves_upstream_errors_and_request_i
     assert response.json()["error"]["code"] == code
     assert response.json()["error"]["request_id"] == REQUEST_ID
     assert "retry" not in response.json()["error"]
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "code"),
+    [
+        (RateLimitExceededError(), 429, "RATE_LIMIT_EXCEEDED"),
+        (UpstreamInvalidResponseError(), 502, "UPSTREAM_INVALID_RESPONSE"),
+        (UpstreamRequestRejectedError(), 502, "UPSTREAM_REQUEST_REJECTED"),
+        (
+            AbuseIPDBAuthenticationError(),
+            503,
+            "UPSTREAM_AUTHENTICATION_FAILED",
+        ),
+        (AbuseIPDBUnavailableError(), 503, "UPSTREAM_UNAVAILABLE"),
+        (UpstreamTimeoutError(), 504, "UPSTREAM_TIMEOUT"),
+    ],
+)
+@pytest.mark.anyio
+async def test_internal_blacklist_uses_every_canonical_provider_error(
+    client: AsyncClient,
+    override_dependency: DependencyOverride,
+    error: Exception,
+    status_code: int,
+    code: str,
+) -> None:
+    class FailingProvider:
+        async def blacklist(self, *_: object) -> object:
+            raise error
+
+    override_dependency(get_reputation_provider, FailingProvider())
+    response = await client.get(
+        "/internal/v1/blacklist", headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == status_code
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    assert response.json()["error"]["code"] == code
+    assert response.json()["error"]["request_id"] == REQUEST_ID
 
 
 @pytest.mark.anyio
@@ -175,7 +240,7 @@ async def test_internal_blacklist_uses_defaults_and_preserves_request_id(
 )
 @pytest.mark.anyio
 async def test_internal_blacklist_validates_query_and_maximum_limit(
-    client: AsyncClient, params: dict[str, object]
+    client: AsyncClient, params: dict[str, str | int]
 ) -> None:
     response = await client.get(
         "/internal/v1/blacklist",
@@ -191,13 +256,13 @@ async def test_internal_blacklist_validates_query_and_maximum_limit(
 @pytest.mark.anyio
 async def test_internal_blacklist_rate_limit_error_includes_retry_metadata(
     client: AsyncClient,
-    override_dependency: object,
+    override_dependency: DependencyOverride,
 ) -> None:
     class FailingProvider:
         async def blacklist(self, *_: object) -> object:
             raise RateLimitExceededError(retry_after_seconds=3600)
 
-    override_dependency(get_reputation_provider, FailingProvider())  # type: ignore[operator]
+    override_dependency(get_reputation_provider, FailingProvider())
     response = await client.get(
         "/internal/v1/blacklist", headers={"X-Request-ID": REQUEST_ID}
     )
