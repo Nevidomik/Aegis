@@ -65,6 +65,16 @@ WHERE User = 'root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 FLUSH PRIVILEGES;
 SQL
 
+# --- Інтеграція імпорту тестових даних ---
+if [[ -f "${DUMP_FILE}" ]]; then
+  echo "Found ${DUMP_FILE}, starting data import into ${DATABASE_NAME}..."
+  mariadb --protocol=socket "${DATABASE_NAME}" < "${DUMP_FILE}" || fail "Failed to import test data from ${DUMP_FILE}"
+  echo "Test data imported successfully."
+else
+  echo "No test data found at ${DUMP_FILE}, skipping import."
+fi
+# -----------------------------------------
+
 mariadb --protocol=socket --batch --skip-column-names <<SQL | grep -Fxq "${DATABASE_NAME}" || \
   fail "database verification failed"
 SELECT SCHEMA_NAME
