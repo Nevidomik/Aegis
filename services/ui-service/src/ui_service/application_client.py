@@ -6,6 +6,8 @@ from pydantic import BaseModel, ValidationError
 
 from ui_service.schemas import (
     ApplicationErrorResponse,
+    BlacklistPage,
+    BlacklistStatus,
     CheckResult,
     HistoryPage,
     ReadinessResponse,
@@ -54,6 +56,25 @@ class ApplicationClient:
             request_id=request_id,
         )
         return self._validated_response(response, CheckResult, request_id=request_id)
+
+    async def blacklist_status(self, *, request_id: str) -> BlacklistStatus:
+        response = await self._request(
+            "GET", "/api/v1/blacklist/status", request_id=request_id
+        )
+        return self._validated_response(
+            response, BlacklistStatus, request_id=request_id
+        )
+
+    async def blacklist(
+        self, *, limit: int, offset: int, request_id: str
+    ) -> BlacklistPage:
+        response = await self._request(
+            "GET",
+            "/api/v1/blacklist",
+            request_id=request_id,
+            params={"limit": limit, "offset": offset},
+        )
+        return self._validated_response(response, BlacklistPage, request_id=request_id)
 
     async def ready(self, *, request_id: str) -> None:
         response = await self._request("GET", "/health/ready", request_id=request_id)

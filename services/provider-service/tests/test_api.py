@@ -114,6 +114,7 @@ async def test_internal_reputation_check_preserves_upstream_errors_and_request_i
     assert response.headers["X-Request-ID"] == REQUEST_ID
     assert response.json()["error"]["code"] == code
     assert response.json()["error"]["request_id"] == REQUEST_ID
+    assert "retry" not in response.json()["error"]
 
 
 @pytest.mark.anyio
@@ -139,3 +140,71 @@ async def test_public_application_routes_are_not_exposed(client: AsyncClient) ->
     assert create.status_code == 404
     assert listing.status_code == 404
     assert record.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_internal_blacklist_uses_defaults_and_preserves_request_id(
+    client: AsyncClient,
+) -> None:
+    response = await client.get(
+        "/internal/v1/blacklist", headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == REQUEST_ID
+    assert response.json()["provider"] == "AbuseIPDB"
+    assert response.json()["request"] == {
+        "confidence_minimum": 90,
+        "limit": 1000,
+    }
+    assert response.json()["items"] == []
+    assert "generated_at" in response.json()
+    assert "fetched_at" in response.json()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"confidence_minimum": -1},
+        {"confidence_minimum": 101},
+        {"confidence_minimum": "invalid"},
+        {"limit": 0},
+        {"limit": 1001},
+        {"limit": "invalid"},
+    ],
+)
+@pytest.mark.anyio
+async def test_internal_blacklist_validates_query_and_maximum_limit(
+    client: AsyncClient, params: dict[str, object]
+) -> None:
+    response = await client.get(
+        "/internal/v1/blacklist",
+        params=params,
+        headers={"X-Request-ID": REQUEST_ID},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert response.json()["error"]["request_id"] == REQUEST_ID
+
+
+@pytest.mark.anyio
+async def test_internal_blacklist_rate_limit_error_includes_retry_metadata(
+    client: AsyncClient,
+    override_dependency: object,
+) -> None:
+    class FailingProvider:
+        async def blacklist(self, *_: object) -> object:
+            raise RateLimitExceededError(retry_after_seconds=3600)
+
+    override_dependency(get_reputation_provider, FailingProvider())  # type: ignore[operator]
+    response = await client.get(
+        "/internal/v1/blacklist", headers={"X-Request-ID": REQUEST_ID}
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert response.json()["error"]["retry"] == {
+        "retry_after_seconds": 3600,
+        "reset_at": None,
+    }

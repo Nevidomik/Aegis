@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Aegis Blacklist</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, sans-serif; line-height: 1.5; }
+      body { background: #f5f7fa; color: #17202a; margin: 0; }
+      main { margin: 2rem auto; max-width: 72rem; padding: 0 1rem; }
+      section { background: white; border: 1px solid #dce2e8; border-radius: 0.5rem; margin-bottom: 1.25rem; padding: 1.25rem; }
+      .error, .warning { padding: 0.75rem; }
+      .error { background: #fff0f0; border-left: 0.3rem solid #b42318; }
+      .warning { background: #fff8e6; border-left: 0.3rem solid #b7791f; }
+      dl { display: grid; grid-template-columns: 15rem 1fr; margin: 0; }
+      dt, dd { border-bottom: 1px solid #edf0f2; margin: 0; padding: 0.4rem; }
+      dt { font-weight: 600; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border-bottom: 1px solid #dce2e8; padding: 0.55rem; text-align: left; }
+      .table-wrap { overflow-x: auto; }
+      nav { display: flex; gap: 1rem; justify-content: space-between; }
+      @media (max-width: 44rem) {
+        dl { grid-template-columns: 1fr; }
+        dt { border-bottom: 0; padding-bottom: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="/">Back to IP reputation checks</a></p>
+      <h1>Latest blacklist snapshot</h1>
+
+      {% if error %}
+        <p class="error" role="alert">{{ error }}</p>
+      {% endif %}
+
+      {% if status %}
+        <section aria-labelledby="status-heading">
+          <h2 id="status-heading">Synchronization status</h2>
+          <div id="blacklist-state-indicator" data-state="{{ status.state }}">
+          {% if status.state == "empty" %}
+            <p>No successful blacklist snapshot is available yet.</p>
+          {% elif status.state == "syncing" %}
+            <p>A synchronization is in progress. The latest successful snapshot remains available below.</p>
+          {% elif status.state == "stale" %}
+            <p class="warning" role="status">The displayed blacklist snapshot is stale.</p>
+          {% elif status.state == "degraded" %}
+            <p class="warning" role="status">The latest synchronization failed. The most recent valid snapshot remains available.</p>
+          {% else %}
+            <p>The latest blacklist snapshot is ready.</p>
+          {% endif %}
+          </div>
+          {% if status.last_error %}
+            <p class="warning">{{ status.last_error.message }}</p>
+          {% endif %}
+          <dl>
+            <dt>State</dt><dd>{{ status.state|capitalize }}</dd>
+            <dt>Last successful synchronization</dt><dd>{{ status.last_success_at or "Not available" }}</dd>
+            <dt>Next scheduled attempt</dt><dd>{{ status.next_attempt_at or "Not scheduled" }}</dd>
+            <dt>Provider quota remaining</dt>
+            <dd>
+              {% if status.rate_limit_remaining is not none %}
+                {{ status.rate_limit_remaining }}{% if status.rate_limit_limit is not none %} of {{ status.rate_limit_limit }}{% endif %}
+              {% else %}
+                Not available
+              {% endif %}
+            </dd>
+          </dl>
+        </section>
+      {% endif %}
+
+      {% if blacklist %}
+        <section aria-labelledby="snapshot-heading">
+          <h2 id="snapshot-heading">Snapshot metadata</h2>
+          <dl>
+            <dt>Provider</dt><dd>{{ blacklist.snapshot.provider }}</dd>
+            <dt>Generated at</dt><dd>{{ blacklist.snapshot.provider_generated_at }}</dd>
+            <dt>Fetched at</dt><dd>{{ blacklist.snapshot.fetched_at }}</dd>
+            <dt>Minimum confidence</dt><dd>{{ blacklist.snapshot.confidence_minimum }}%</dd>
+          </dl>
+        </section>
+
+        <section aria-labelledby="entries-heading">
+          <h2 id="entries-heading">Blacklist entries</h2>
+          {% if blacklist.items %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>IP address</th>
+                    <th>IP version</th>
+                    <th>Abuse confidence score</th>
+                    <th>Country</th>
+                    <th>Last reported</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in blacklist.items %}
+                    <tr>
+                      <td>{{ item.ip_address }}</td>
+                      <td>IPv{{ item.ip_version }}</td>
+                      <td>{{ item.abuse_confidence_score }}%</td>
+                      <td>{{ item.country_code or "Unknown" }}</td>
+                      <td>{{ item.last_reported_at or "Never" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p>This snapshot contains no blacklist entries.</p>
+          {% endif %}
+          <p>Showing {{ blacklist.items|length }} of {{ blacklist.total }} entries.</p>
+          <nav aria-label="Blacklist pagination">
+            <span>{% if page > 1 %}<a href="/blacklist?page={{ page - 1 }}">Previous</a>{% endif %}</span>
+            <span>{% if blacklist.offset + blacklist.limit < blacklist.total %}<a href="/blacklist?page={{ page + 1 }}">Next</a>{% endif %}</span>
+          </nav>
+        </section>
+      {% endif %}
+    </main>
+    {% if status %}
+      <script src="/static/blacklist.js"></script>
+      <script>
+        window.BlacklistPolling.start({
+          currentSnapshotId: {{ status.latest_snapshot_id | tojson }},
+          statusUrl: "/blacklist/status",
+          indicator: document.getElementById("blacklist-state-indicator")
+        });
+      </script>
+    {% endif %}
+  </body>
+</html>

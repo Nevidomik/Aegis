@@ -11,11 +11,21 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from history_service.blacklist_read import (
+    BlacklistReadService,
+    get_blacklist_read_service,
+)
 from history_service.database import get_session
 from history_service.exceptions import ApplicationError
 from history_service.provider_client import ProviderClient, get_provider_client
 from history_service.schemas import (
     ApplicationCheckRequest,
+    BlacklistEntryPageQuery,
+    BlacklistEntryQuery,
+    BlacklistPage,
+    BlacklistSnapshotList,
+    BlacklistSnapshotListQuery,
+    BlacklistStatusResponse,
     ErrorDetail,
     ErrorResponse,
     HistoryList,
@@ -167,6 +177,80 @@ def get_application_check(
             request_id=request_id_from(request),
         )
     return HistoryRecord.from_record(record)
+
+
+@router.get(
+    "/api/v1/blacklist/status",
+    response_model=BlacklistStatusResponse,
+    responses={503: {"model": ErrorResponse}},
+    tags=["blacklist"],
+)
+def get_blacklist_status(
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[BlacklistReadService, Depends(get_blacklist_read_service)],
+) -> BlacklistStatusResponse:
+    return service.status(session)
+
+
+@router.get(
+    "/api/v1/blacklist/snapshots",
+    response_model=BlacklistSnapshotList,
+    responses={503: {"model": ErrorResponse}},
+    tags=["blacklist"],
+)
+def list_blacklist_snapshots(
+    query: Annotated[BlacklistSnapshotListQuery, Query()],
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[BlacklistReadService, Depends(get_blacklist_read_service)],
+) -> BlacklistSnapshotList:
+    return service.snapshots(session, query)
+
+
+@router.get(
+    "/api/v1/blacklist/snapshots/{snapshot_id}",
+    response_model=BlacklistPage,
+    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["blacklist"],
+)
+def get_blacklist_snapshot(
+    snapshot_id: Annotated[int, Path(gt=0)],
+    query: Annotated[BlacklistEntryPageQuery, Query()],
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[BlacklistReadService, Depends(get_blacklist_read_service)],
+) -> BlacklistPage | JSONResponse:
+    result = service.snapshot(session, snapshot_id, query)
+    if result is None:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="BLACKLIST_SNAPSHOT_NOT_FOUND",
+            message="The requested blacklist snapshot does not exist.",
+            request_id=request_id_from(request),
+        )
+    return result
+
+
+@router.get(
+    "/api/v1/blacklist",
+    response_model=BlacklistPage,
+    responses={404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    tags=["blacklist"],
+)
+def get_latest_blacklist(
+    query: Annotated[BlacklistEntryQuery, Query()],
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+    service: Annotated[BlacklistReadService, Depends(get_blacklist_read_service)],
+) -> BlacklistPage | JSONResponse:
+    result = service.latest(session, query)
+    if result is None:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="BLACKLIST_SNAPSHOT_NOT_FOUND",
+            message="No successful blacklist snapshot is available.",
+            request_id=request_id_from(request),
+        )
+    return result
 
 
 async def validation_exception_handler(

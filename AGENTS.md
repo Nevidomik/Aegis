@@ -154,10 +154,12 @@ Provider Service must not schedule requests or persist blacklist data.
 
 - maximum entries: 1000;
 - minimum confidence score: 90;
-- base synchronization interval: 21600 seconds;
+- base synchronization interval: 21600 seconds (six hours);
 - UI status polling interval: 30 seconds.
 
-All values that may differ between environments must be configurable.
+The confidence threshold, scheduler enablement, base interval, stale threshold,
+temporary-attempt bound, and jitter bound are configurable. The initial
+complete-snapshot limit is fixed at no more than 1000 entries.
 
 ### Scheduler ownership
 
@@ -180,10 +182,6 @@ process.
 A configuration flag must allow the scheduler to be disabled:
 
 `BLACKLIST_SCHEDULER_ENABLED=false`
-
-Future deployment may move the same synchronization operation to cron,
-systemd timer, or a dedicated process without rewriting the synchronization
-business logic.
 
 ### Synchronization behavior
 
@@ -219,8 +217,8 @@ Rules:
 - use the configured interval after a successful request;
 - when remaining quota is zero, wait until the reported reset time;
 - after HTTP 429, honor `Retry-After` or the rate-limit reset time;
-- use bounded exponential backoff for temporary connection, timeout, and 5xx
-  failures;
+- use the bounded 5, 15, 30, and 60 minute progression for temporary
+  connection, timeout, and 5xx failures;
 - do not retry continuously;
 - do not delete valid local data after a failed update;
 - add a small random delay where practical to avoid repeated synchronized
@@ -246,6 +244,11 @@ Snapshot entries must be unique by snapshot and normalized IP address.
 
 The existing manual lookup table remains in the database as a legacy table.
 The blacklist synchronization flow must not write to it.
+
+Accepted complete snapshots are retained historically. The initial
+implementation has no automatic snapshot-retention or pruning job.
+
+Charts and analytical dashboards are outside the current UI scope.
 
 10. Errors, Tracing & Logs
 

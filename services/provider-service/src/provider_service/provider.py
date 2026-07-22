@@ -1,6 +1,6 @@
 """AbuseIPDB reputation client and deterministic test provider."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Literal, Self
@@ -27,7 +27,12 @@ from provider_service.exceptions import (
     UpstreamRequestRejectedError,
     UpstreamTimeoutError,
 )
-from provider_service.schemas import ReputationResult
+from provider_service.schemas import (
+    BlacklistEntry,
+    BlacklistProviderResult,
+    RateLimitMetadata,
+    ReputationResult,
+)
 
 
 def _to_camel(value: str) -> str:
@@ -97,6 +102,75 @@ class AbuseIPDBEnvelope(BaseModel):
     data: AbuseIPDBData
 
 
+class AbuseIPDBBlacklistMeta(BaseModel):
+    """Validated metadata returned by AbuseIPDB's blacklist endpoint."""
+
+    model_config = ConfigDict(
+        alias_generator=lambda name: _to_camel(name), extra="ignore"
+    )
+
+    generated_at: datetime
+
+    @field_validator("generated_at")
+    @classmethod
+    def require_aware_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("AbuseIPDB timestamps must include a timezone.")
+        return value
+
+
+class AbuseIPDBBlacklistEntry(BaseModel):
+    """Validated entry returned by AbuseIPDB's blacklist endpoint."""
+
+    model_config = ConfigDict(
+        alias_generator=lambda name: _to_camel(name), extra="ignore"
+    )
+
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    last_reported_at: datetime | None = None
+
+    @field_validator("ip_address")
+    @classmethod
+    def normalize_ip_address(cls, value: str) -> str:
+        try:
+            address = ip_address(value)
+        except ValueError as error:
+            raise ValueError("AbuseIPDB returned an invalid IP address.") from error
+        if (
+            address.is_loopback
+            or address.is_private
+            or address.is_multicast
+            or address.is_link_local
+            or address.is_unspecified
+            or not address.is_global
+        ):
+            raise ValueError("AbuseIPDB returned a non-public IP address.")
+        return str(address)
+
+    @field_validator("country_code")
+    @classmethod
+    def normalize_country_code(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
+
+    @field_validator("last_reported_at")
+    @classmethod
+    def require_aware_timestamp(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("AbuseIPDB timestamps must include a timezone.")
+        return value
+
+
+class AbuseIPDBBlacklistEnvelope(BaseModel):
+    """Top-level AbuseIPDB blacklist response."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    meta: AbuseIPDBBlacklistMeta
+    data: list[AbuseIPDBBlacklistEntry] = Field(max_length=1000)
+
+
 class AbuseIPDBProvider:
     """Perform validated lookups with a lifecycle-owned HTTPX client."""
 
@@ -144,6 +218,86 @@ class AbuseIPDBProvider:
             source="AbuseIPDB",
         )
 
+    async def blacklist(
+        self, confidence_minimum: int, limit: int
+    ) -> BlacklistProviderResult:
+        """Return one complete validated AbuseIPDB blacklist snapshot."""
+        try:
+            response = await self.client.get(
+                "/api/v2/blacklist",
+                params={
+                    "confidenceMinimum": confidence_minimum,
+                    "limit": limit,
+                },
+            )
+        except httpx.TimeoutException as error:
+            raise UpstreamTimeoutError from error
+        except httpx.RequestError as error:
+            raise AbuseIPDBUnavailableError from error
+
+        if response.status_code == 429:
+            rate_limit = self._parse_rate_limit_headers(response.headers)
+            raise RateLimitExceededError(
+                retry_after_seconds=rate_limit.retry_after_seconds,
+                reset_at=rate_limit.reset_at,
+            )
+        self._raise_for_status(response.status_code)
+        rate_limit = self._parse_rate_limit_headers(response.headers)
+        try:
+            envelope = AbuseIPDBBlacklistEnvelope.model_validate(response.json())
+        except (ValueError, ValidationError) as error:
+            raise UpstreamInvalidResponseError from error
+        if len(envelope.data) > limit:
+            raise UpstreamInvalidResponseError
+
+        items = [
+            BlacklistEntry(
+                ip_address=entry.ip_address,
+                ip_version=ip_address(entry.ip_address).version,
+                abuse_confidence_score=entry.abuse_confidence_score,
+                country_code=entry.country_code,
+                last_reported_at=entry.last_reported_at,
+            )
+            for entry in envelope.data
+        ]
+        addresses = [item.ip_address for item in items]
+        if len(addresses) != len(set(addresses)):
+            raise UpstreamInvalidResponseError
+        return BlacklistProviderResult(
+            generated_at=envelope.meta.generated_at,
+            rate_limit=rate_limit,
+            items=items,
+        )
+
+    @staticmethod
+    def _parse_rate_limit_headers(headers: httpx.Headers) -> RateLimitMetadata:
+        def optional_integer(name: str) -> int | None:
+            raw_value = headers.get(name)
+            if raw_value is None:
+                return None
+            try:
+                value = int(raw_value)
+            except ValueError as error:
+                raise UpstreamInvalidResponseError from error
+            if value < 0:
+                raise UpstreamInvalidResponseError
+            return value
+
+        reset_timestamp = optional_integer("X-RateLimit-Reset")
+        try:
+            return RateLimitMetadata(
+                limit=optional_integer("X-RateLimit-Limit"),
+                remaining=optional_integer("X-RateLimit-Remaining"),
+                reset_at=(
+                    datetime.fromtimestamp(reset_timestamp, tz=UTC)
+                    if reset_timestamp is not None
+                    else None
+                ),
+                retry_after_seconds=optional_integer("Retry-After"),
+            )
+        except (OSError, OverflowError, ValueError, ValidationError) as error:
+            raise UpstreamInvalidResponseError from error
+
     @staticmethod
     def _raise_for_status(status_code: int) -> None:
         if 200 <= status_code < 300:
@@ -184,6 +338,17 @@ class FakeReputationProvider:
             num_distinct_users=distinct_users,
             last_reported_at=None,
             source="FakeReputationProvider",
+        )
+
+    async def blacklist(
+        self, confidence_minimum: int, limit: int
+    ) -> BlacklistProviderResult:
+        """Return repeatable blacklist data for endpoint tests."""
+        del confidence_minimum, limit
+        return BlacklistProviderResult(
+            generated_at=datetime(2026, 7, 22, 12, 0, tzinfo=UTC),
+            rate_limit=RateLimitMetadata(),
+            items=[],
         )
 
 

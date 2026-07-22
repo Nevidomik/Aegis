@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -13,6 +13,8 @@ from provider_service.provider import AbuseIPDBProvider, get_reputation_provider
 from provider_service.schemas import (
     ErrorDetail,
     ErrorResponse,
+    InternalBlacklistRequest,
+    InternalBlacklistResponse,
     InternalReputationRequest,
     InternalReputationResponse,
 )
@@ -25,12 +27,25 @@ router = APIRouter()
 
 
 def error_response(
-    *, status_code: int, code: str, message: str, request_id: str
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    request_id: str,
+    retry: dict[str, object] | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
-        error=ErrorDetail(code=code, message=message, request_id=request_id)
+        error=ErrorDetail(
+            code=code,
+            message=message,
+            request_id=request_id,
+            retry=retry,
+        )
     )
-    return JSONResponse(status_code=status_code, content=body.model_dump())
+    content = body.model_dump(mode="json")
+    if retry is None:
+        del content["error"]["retry"]
+    return JSONResponse(status_code=status_code, content=content)
 
 
 def current_request_id(request: Request) -> str:
@@ -98,14 +113,44 @@ async def create_internal_reputation_check(
     return await service.check(payload, provider)
 
 
+@router.get(
+    "/internal/v1/blacklist",
+    response_model=InternalBlacklistResponse,
+    responses={
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+    },
+    tags=["internal-blacklist"],
+)
+async def get_internal_blacklist(
+    query: Annotated[InternalBlacklistRequest, Query()],
+    service: Annotated[ReputationProxyService, Depends(get_reputation_proxy_service)],
+    provider: Annotated[AbuseIPDBProvider, Depends(get_reputation_provider)],
+) -> InternalBlacklistResponse:
+    """Return a complete validated provider snapshot without persistence."""
+    return await service.blacklist(query, provider)
+
+
 async def application_exception_handler(
     request: Request, error: ApplicationError
 ) -> JSONResponse:
+    retry = None
+    retry_after_seconds = getattr(error, "retry_after_seconds", None)
+    reset_at = getattr(error, "reset_at", None)
+    if retry_after_seconds is not None or reset_at is not None:
+        retry = {
+            "retry_after_seconds": retry_after_seconds,
+            "reset_at": reset_at,
+        }
     return error_response(
         status_code=error.status_code,
         code=error.code,
         message=error.message,
         request_id=current_request_id(request),
+        retry=retry,
     )
 
 

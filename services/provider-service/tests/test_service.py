@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 from provider_service.provider import FakeReputationProvider
-from provider_service.schemas import InternalReputationRequest
+from provider_service.schemas import InternalBlacklistRequest, InternalReputationRequest
 from provider_service.service import ReputationProxyService
 
 CHECKED_AT = datetime(2026, 7, 15, 18, 30, tzinfo=UTC)
@@ -21,3 +21,17 @@ async def test_internal_proxy_returns_normalized_result_without_persistence() ->
     assert response.source == "FakeReputationProvider"
     assert not hasattr(response, "history_id")
     assert not hasattr(response, "request_id")
+
+
+@pytest.mark.anyio
+async def test_internal_proxy_adds_blacklist_fetch_metadata() -> None:
+    response = await ReputationProxyService(clock=lambda: CHECKED_AT).blacklist(
+        InternalBlacklistRequest(),
+        FakeReputationProvider(),
+    )
+
+    assert response.provider == "AbuseIPDB"
+    assert response.fetched_at == CHECKED_AT
+    assert response.request.confidence_minimum == 90
+    assert response.request.limit == 1000
+    assert response.items == []

@@ -10,6 +10,8 @@ from history_service.exceptions import (
     map_proxy_error,
 )
 from history_service.schemas import (
+    ProviderBlacklistRequest,
+    ProviderBlacklistResponse,
     ProviderErrorResponse,
     ProviderReputationRequest,
     ProviderReputationResponse,
@@ -17,7 +19,7 @@ from history_service.schemas import (
 
 
 class ProviderClient:
-    """Call only Provider's internal reputation endpoint."""
+    """Call Provider's validated internal endpoints."""
 
     def __init__(self, client: httpx.Client) -> None:
         self.client = client
@@ -58,6 +60,68 @@ class ProviderClient:
             or result.max_age_days != payload.max_age_days
         ):
             raise ProviderServiceInvalidResponseError
+        return result
+
+    def get_blacklist(
+        self, query: ProviderBlacklistRequest, *, request_id: str
+    ) -> ProviderBlacklistResponse:
+        """Retrieve and validate one complete normalized blacklist snapshot."""
+        try:
+            response = self.client.get(
+                "/internal/v1/blacklist",
+                params=query.model_dump(mode="json"),
+                headers={"X-Request-ID": request_id},
+            )
+        except httpx.RequestError as error:
+            raise ProviderServiceUnavailableError(
+                code="PROVIDER_SERVICE_UNAVAILABLE"
+            ) from error
+
+        if response.headers.get("X-Request-ID") != request_id:
+            raise ProviderServiceInvalidResponseError(
+                code="PROVIDER_SERVICE_INVALID_RESPONSE"
+            )
+
+        if response.status_code >= 400:
+            try:
+                error_response = ProviderErrorResponse.model_validate(response.json())
+            except (ValueError, ValidationError) as error:
+                raise ProviderServiceInvalidResponseError(
+                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
+                ) from error
+            detail = error_response.error
+            if detail.request_id != request_id:
+                raise ProviderServiceInvalidResponseError(
+                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
+                )
+            retry = detail.retry
+            mapped_error = map_proxy_error(
+                detail.code,
+                retry_after_seconds=(
+                    retry.retry_after_seconds if retry is not None else None
+                ),
+                reset_at=retry.reset_at if retry is not None else None,
+            )
+            if isinstance(mapped_error, ProviderServiceInvalidResponseError):
+                raise ProviderServiceInvalidResponseError(
+                    code="PROVIDER_SERVICE_INVALID_RESPONSE"
+                )
+            raise mapped_error
+
+        if response.status_code != 200:
+            raise ProviderServiceInvalidResponseError(
+                code="PROVIDER_SERVICE_INVALID_RESPONSE"
+            )
+        try:
+            result = ProviderBlacklistResponse.model_validate(response.json())
+        except (ValueError, ValidationError) as error:
+            raise ProviderServiceInvalidResponseError(
+                code="PROVIDER_SERVICE_INVALID_RESPONSE"
+            ) from error
+        if result.request.model_dump() != query.model_dump():
+            raise ProviderServiceInvalidResponseError(
+                code="PROVIDER_SERVICE_INVALID_RESPONSE"
+            )
         return result
 
 

@@ -9,7 +9,14 @@ from ui_service.application_client import (
     get_application_client,
 )
 from ui_service.main import app
-from ui_service.schemas import CheckResult, HistoryPage
+from ui_service.schemas import (
+    BlacklistEntry,
+    BlacklistPage,
+    BlacklistSnapshotSummary,
+    BlacklistStatus,
+    CheckResult,
+    HistoryPage,
+)
 
 REQUEST_ID = UUID("6f5aa064-43e8-4dbb-a544-d60b68af5cbd")
 
@@ -46,6 +53,55 @@ class FakeApplicationClient:
         self.history_request_id: str | None = None
         self.ready_error: str | None = None
         self.ready_request_id: str | None = None
+        self.blacklist_status_result = BlacklistStatus(
+            state="ready",
+            sync_in_progress=False,
+            latest_snapshot_id=42,
+            latest_provider_generated_at=datetime(2026, 7, 22, 12, tzinfo=UTC),
+            latest_fetched_at=datetime(2026, 7, 22, 12, 0, 2, tzinfo=UTC),
+            last_attempt_at=datetime(2026, 7, 22, 12, tzinfo=UTC),
+            last_success_at=datetime(2026, 7, 22, 12, 0, 4, tzinfo=UTC),
+            next_attempt_at=datetime(2026, 7, 22, 18, 0, 4, tzinfo=UTC),
+            rate_limit_limit=5,
+            rate_limit_remaining=4,
+            rate_limit_reset_at=datetime(2026, 7, 23, tzinfo=UTC),
+            data_stale=False,
+            last_error=None,
+        )
+        self.blacklist_page = BlacklistPage(
+            snapshot=BlacklistSnapshotSummary(
+                snapshot_id=42,
+                provider="AbuseIPDB",
+                provider_generated_at=datetime(2026, 7, 22, 12, tzinfo=UTC),
+                fetched_at=datetime(2026, 7, 22, 12, 0, 2, tzinfo=UTC),
+                confidence_minimum=90,
+                requested_limit=1000,
+                returned_count=2,
+            ),
+            items=[
+                BlacklistEntry(
+                    ip_address="8.8.8.8",
+                    ip_version=4,
+                    abuse_confidence_score=100,
+                    country_code="US",
+                    last_reported_at=datetime(2026, 7, 22, 11, 47, tzinfo=UTC),
+                ),
+                BlacklistEntry(
+                    ip_address="2606:4700:4700::1111",
+                    ip_version=6,
+                    abuse_confidence_score=95,
+                    country_code=None,
+                    last_reported_at=None,
+                ),
+            ],
+            limit=100,
+            offset=0,
+            total=2,
+        )
+        self.blacklist_status_error: str | None = None
+        self.blacklist_error: str | None = None
+        self.blacklist_status_request_id: str | None = None
+        self.blacklist_request: dict[str, object] | None = None
 
     async def ready(self, *, request_id: str) -> None:
         self.ready_request_id = request_id
@@ -71,6 +127,24 @@ class FakeApplicationClient:
         if self.history_error is not None:
             raise ApplicationClientError(self.history_error)
         return self.history
+
+    async def blacklist_status(self, *, request_id: str) -> BlacklistStatus:
+        self.blacklist_status_request_id = request_id
+        if self.blacklist_status_error is not None:
+            raise ApplicationClientError(self.blacklist_status_error)
+        return self.blacklist_status_result
+
+    async def blacklist(
+        self, *, limit: int, offset: int, request_id: str
+    ) -> BlacklistPage:
+        self.blacklist_request = {
+            "limit": limit,
+            "offset": offset,
+            "request_id": request_id,
+        }
+        if self.blacklist_error is not None:
+            raise ApplicationClientError(self.blacklist_error)
+        return self.blacklist_page.model_copy(update={"limit": limit, "offset": offset})
 
 
 @pytest.fixture

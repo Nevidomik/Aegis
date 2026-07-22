@@ -49,6 +49,13 @@ endpoint, and returns a validated normalized result. It forwards no request to
 History Service and performs no persistence or idempotency work. A valid
 `X-Request-ID` is returned in the response header and in safe error envelopes.
 
+`GET /internal/v1/blacklist` returns one complete normalized AbuseIPDB snapshot.
+It accepts `confidence_minimum` from 0 through 100 (default 90) and `limit` from
+1 through 1000 (default 1000). Duplicate normalized IP addresses invalidate the
+snapshot with `UPSTREAM_INVALID_RESPONSE`; results are never persisted.
+Provider Service extracts supported rate-limit and `Retry-After` metadata for
+History Service, but it does not decide when the next request runs.
+
 Tests replace the reputation provider or use HTTPX mock transports. The default
 suite makes no live AbuseIPDB calls:
 

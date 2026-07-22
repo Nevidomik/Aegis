@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from ui_service.application_client import (
@@ -13,10 +13,20 @@ from ui_service.application_client import (
     ApplicationClientError,
     get_application_client,
 )
-from ui_service.schemas import CheckResult, HistoryPage
+from ui_service.schemas import (
+    BlacklistPage,
+    BlacklistPollStatus,
+    BlacklistStatus,
+    CheckResult,
+    HistoryPage,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+BLACKLIST_PAGE_SIZE = 100
+BLACKLIST_SCRIPT = (Path(__file__).parent / "static" / "blacklist.js").read_text(
+    encoding="utf-8"
+)
 
 
 def request_id_for(request: Request) -> str:
@@ -70,6 +80,11 @@ async def liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/static/blacklist.js", include_in_schema=False)
+async def blacklist_script() -> Response:
+    return Response(content=BLACKLIST_SCRIPT, media_type="text/javascript")
+
+
 @router.get("/health/ready", tags=["health"], response_model=None)
 async def readiness(
     request: Request,
@@ -99,6 +114,72 @@ async def index(
         history=history,
         history_error=history_error,
     )
+
+
+@router.get("/blacklist", response_class=HTMLResponse, include_in_schema=False)
+async def blacklist(
+    request: Request,
+    application_client: Annotated[ApplicationClient, Depends(get_application_client)],
+    page: Annotated[int, Query(ge=1)] = 1,
+) -> HTMLResponse:
+    request_id = request_id_for(request)
+    status_result: BlacklistStatus | None = None
+    blacklist_page: BlacklistPage | None = None
+    error: str | None = None
+
+    try:
+        status_result = await application_client.blacklist_status(request_id=request_id)
+        if status_result.state != "empty":
+            blacklist_page = await application_client.blacklist(
+                limit=BLACKLIST_PAGE_SIZE,
+                offset=(page - 1) * BLACKLIST_PAGE_SIZE,
+                request_id=request_id,
+            )
+    except ApplicationClientError as application_error:
+        error = str(application_error)
+
+    response = templates.TemplateResponse(
+        request=request,
+        name="blacklist.html",
+        context={
+            "status": status_result,
+            "blacklist": blacklist_page,
+            "error": error,
+            "page": page,
+        },
+    )
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@router.get(
+    "/blacklist/status",
+    response_model=BlacklistPollStatus,
+    responses={503: {"description": "History Service is unavailable"}},
+    include_in_schema=False,
+)
+async def blacklist_status(
+    request: Request,
+    application_client: Annotated[ApplicationClient, Depends(get_application_client)],
+) -> BlacklistPollStatus | JSONResponse:
+    request_id = request_id_for(request)
+    try:
+        status_result = await application_client.blacklist_status(request_id=request_id)
+    except ApplicationClientError:
+        response = JSONResponse(
+            status_code=503,
+            content={"error": "Blacklist status is temporarily unavailable."},
+        )
+    else:
+        response = JSONResponse(
+            content=BlacklistPollStatus(
+                state=status_result.state,
+                latest_snapshot_id=status_result.latest_snapshot_id,
+                data_stale=status_result.data_stale,
+            ).model_dump(mode="json")
+        )
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @router.post("/", response_class=HTMLResponse, include_in_schema=False)

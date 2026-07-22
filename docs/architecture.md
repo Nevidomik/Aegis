@@ -21,7 +21,9 @@ Responsibilities:
 - accept an IP address from the user;
 - request reputation checks from History Service;
 - request lookup history from History Service;
-- display current results, history, and user-facing errors.
+- request locally persisted blacklist status and entries from History Service;
+- display current results, history, blacklist data, and user-facing errors;
+- proxy the minimal browser blacklist-status poll to History Service.
 
 Restrictions:
 - no direct Provider Service access;
@@ -55,6 +57,9 @@ Additional responsibilities:
 - use provider rate-limit metadata when determining the next attempt;
 - expose locally persisted blacklist data to UI;
 - retain the latest successful snapshot after an update failure.
+
+The initial implementation retains every accepted complete snapshot and has no
+automatic pruning policy. Each snapshot contains no more than 1000 entries.
 
 Restrictions:
 - no direct AbuseIPDB access;
@@ -158,6 +163,12 @@ table.
 If synchronization fails, UI continues displaying the latest successful
 snapshot and shows a stale-data or synchronization warning where appropriate.
 
+The in-process scheduler is controlled by `BLACKLIST_SCHEDULER_ENABLED` and is
+disabled by default. Its default interval is 21600 seconds (six hours). Exactly
+one History Service worker may enable it; additional Uvicorn workers must run
+with the scheduler disabled. The scheduler reads persisted `next_attempt_at`
+state and does not bypass a future rate-limit reset.
+
 
 
 ---
@@ -171,6 +182,10 @@ History Service owns the application API:
 * `POST /api/v1/checks`
 * `GET  /api/v1/checks`
 * `GET  /api/v1/checks/{history_id}`
+* `GET  /api/v1/blacklist/status`
+* `GET  /api/v1/blacklist`
+* `GET  /api/v1/blacklist/snapshots`
+* `GET  /api/v1/blacklist/snapshots/{snapshot_id}`
 
 UI Service communicates only with this API.
 
@@ -179,8 +194,9 @@ UI Service communicates only with this API.
 Provider Service owns the internal provider API:
 
 * `POST /internal/v1/reputation-checks`
+* `GET /internal/v1/blacklist`
 
-Only History Service may call this endpoint.
+Only History Service may call these endpoints.
 *The provider contract must not expose unnecessary raw AbuseIPDB response data.*
 
 ---
@@ -218,7 +234,9 @@ Only History Service may call this endpoint.
 * idempotency rules;
 * persistence model;
 * history queries;
-* database migrations.
+* database migrations;
+* complete blacklist snapshots and entries;
+* blacklist synchronization runs and next-attempt metadata.
 
 **Provider Service owns:**
 
@@ -231,7 +249,11 @@ Only History Service may call this endpoint.
 **MariaDB owns:**
 
 * persisted lookup records;
+* persisted blacklist snapshots, entries, and synchronization runs;
 * Alembic version state.
+
+The original manual-check table remains supported by the manual-check API and
+is not read or written by blacklist synchronization.
 
 *Note: AbuseIPDB responses are treated as untrusted external data. Provider Service must validate them before returning an internal response. History Service must validate Provider Service responses before persistence.*
 
@@ -241,12 +263,15 @@ Only History Service may call this endpoint.
 
 ### UI Service
 
-* **May receive:** `HISTORY_SERVICE_URL`
+* **May receive:** `HISTORY_SERVICE_URL`, `HISTORY_TIMEOUT_SECONDS`
 - **Must not receive:** `PROVIDER_SERVICE_URL`, `ABUSEIPDB_API_KEY`, `DATABASE_URL`, `MARIADB_PASSWORD`
 
 ### History Service
 
-- **May receive:** `PROVIDER_SERVICE_URL`, `DATABASE_URL`, `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD`
+- **May receive:** `PROVIDER_SERVICE_URL`, `PROVIDER_TIMEOUT_SECONDS`,
+  `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`,
+  `MARIADB_PASSWORD`, and the `BLACKLIST_*` scheduler settings documented in
+  `services/history-service/.env.example`
 * **Must not receive:** `ABUSEIPDB_API_KEY`
 
 ### Provider Service
@@ -303,12 +328,14 @@ Each service exposes:
 **UI Service**
 
 * **live:** confirms the process can serve requests.
-* **ready:** confirms local initialization and configuration. (It should not make an expensive downstream lookup).
+* **ready:** calls History Service readiness and reports not-ready when History
+  Service or MariaDB is unavailable. It does not perform a provider lookup.
 
 **History Service**
 
 * **live:** confirms the process can serve requests.
-* **ready:** confirms local initialization and MariaDB availability. (Readiness may also verify that Provider Service configuration is valid, but must not perform a real AbuseIPDB lookup).
+* **ready:** confirms MariaDB availability with a minimal database query. It
+  does not call Provider Service or AbuseIPDB.
 
 **Provider Service**
 
@@ -342,3 +369,6 @@ UI :8000
 ```
 
 History Service separately accesses MariaDB on port `3306`.
+
+The initial UI is tabular. Charts and analytical dashboards are outside the
+current scope.

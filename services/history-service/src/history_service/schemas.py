@@ -16,7 +16,11 @@ from pydantic import (
     model_validator,
 )
 
-from history_service.models import IpCheckHistory
+from history_service.models import (
+    BlacklistSnapshot,
+    BlacklistSnapshotEntry,
+    IpCheckHistory,
+)
 
 MAX_COUNT = 2_147_483_647
 
@@ -132,6 +136,115 @@ class ProviderReputationResponse(BaseModel):
         return self
 
 
+class ProviderBlacklistRequest(BaseModel):
+    """Strict query parameters sent to Provider's blacklist endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence_minimum: StrictInt = Field(default=90, ge=0, le=100)
+    limit: StrictInt = Field(default=1000, ge=1, le=1000)
+
+
+class ProviderBlacklistRequestEcho(BaseModel):
+    """Strict request metadata returned by Provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence_minimum: StrictInt = Field(ge=0, le=100)
+    limit: StrictInt = Field(ge=1, le=1000)
+
+
+class ProviderRateLimitMetadata(BaseModel):
+    """Normalized rate-limit metadata returned by Provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: StrictInt | None = Field(default=None, ge=0)
+    remaining: StrictInt | None = Field(default=None, ge=0)
+    reset_at: datetime | None = None
+    retry_after_seconds: StrictInt | None = Field(default=None, ge=0)
+
+    @field_validator("reset_at")
+    @classmethod
+    def validate_reset_at(cls, value: datetime | None) -> datetime | None:
+        return normalize_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_remaining(self) -> Self:
+        if (
+            self.limit is not None
+            and self.remaining is not None
+            and self.remaining > self.limit
+        ):
+            raise ValueError("Rate-limit remaining cannot exceed its limit.")
+        return self
+
+
+class ProviderBlacklistEntry(BaseModel):
+    """One normalized entry returned by Provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    ip_version: Literal[4, 6]
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    last_reported_at: datetime | None = None
+
+    @field_validator("ip_address")
+    @classmethod
+    def require_canonical_public_ip(cls, value: str) -> str:
+        normalized = normalize_public_ip(value)
+        if normalized != value:
+            raise ValueError("The IP address must use its canonical representation.")
+        return value
+
+    @field_validator("country_code")
+    @classmethod
+    def require_uppercase_country_code(cls, value: str | None) -> str | None:
+        if value is not None and value != value.upper():
+            raise ValueError("country_code must use uppercase characters.")
+        return value
+
+    @field_validator("last_reported_at")
+    @classmethod
+    def validate_last_reported_at(cls, value: datetime | None) -> datetime | None:
+        return normalize_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_address_metadata(self) -> Self:
+        if self.ip_version != ip_address(self.ip_address).version:
+            raise ValueError("ip_version does not match ip_address.")
+        return self
+
+
+class ProviderBlacklistResponse(BaseModel):
+    """Complete normalized blacklist snapshot returned by Provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["AbuseIPDB"]
+    generated_at: datetime
+    fetched_at: datetime
+    request: ProviderBlacklistRequestEcho
+    rate_limit: ProviderRateLimitMetadata
+    items: list[ProviderBlacklistEntry] = Field(max_length=1000)
+
+    @field_validator("generated_at", "fetched_at")
+    @classmethod
+    def validate_timestamps(cls, value: datetime) -> datetime:
+        return normalize_utc(value)
+
+    @model_validator(mode="after")
+    def validate_complete_snapshot(self) -> Self:
+        if len(self.items) > self.request.limit:
+            raise ValueError("Blacklist item count exceeds the requested limit.")
+        addresses = [item.ip_address for item in self.items]
+        if len(addresses) != len(set(addresses)):
+            raise ValueError("Blacklist entries must contain unique IP addresses.")
+        return self
+
+
 class CheckCreate(ProviderReputationResponse):
     """A normalized successful lookup ready for persistence."""
 
@@ -210,6 +323,31 @@ class ErrorDetail(BaseModel):
     request_id: StrictStr = Field(min_length=1, max_length=36)
 
 
+class ProviderRetryMetadata(BaseModel):
+    """Validated retry metadata returned with a Provider error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retry_after_seconds: StrictInt | None = Field(default=None, ge=0)
+    reset_at: datetime | None = None
+
+    @field_validator("reset_at")
+    @classmethod
+    def validate_reset_at(cls, value: datetime | None) -> datetime | None:
+        return normalize_utc(value) if value is not None else None
+
+
+class ProviderErrorDetail(BaseModel):
+    """Strict error details returned across the Provider boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: StrictStr = Field(min_length=1, max_length=64)
+    message: StrictStr = Field(min_length=1, max_length=500)
+    request_id: StrictStr = Field(min_length=1, max_length=36)
+    retry: ProviderRetryMetadata | None = None
+
+
 class ErrorResponse(BaseModel):
     """Stable API error envelope."""
 
@@ -221,4 +359,128 @@ class ProviderErrorResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    error: ErrorDetail
+    error: ProviderErrorDetail
+
+
+class BlacklistEntryPageQuery(BaseModel):
+    """Validated pagination for one snapshot's entries."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=100, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class BlacklistEntryQuery(BlacklistEntryPageQuery):
+    """Validated filters and pagination for latest snapshot entries."""
+
+    ip_version: Literal[4, 6] | None = None
+    minimum_score: int | None = Field(default=None, ge=0, le=100)
+    country_code: str | None = Field(
+        default=None, min_length=2, max_length=2, pattern=r"^[A-Z]{2}$"
+    )
+
+
+class BlacklistSnapshotListQuery(BaseModel):
+    """Validated pagination for stored snapshots."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class BlacklistSnapshotSummary(BaseModel):
+    """Application-facing snapshot metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: StrictInt = Field(gt=0)
+    provider: StrictStr = Field(min_length=1, max_length=32)
+    provider_generated_at: datetime
+    fetched_at: datetime
+    confidence_minimum: StrictInt = Field(ge=0, le=100)
+    requested_limit: StrictInt = Field(ge=1, le=1000)
+    returned_count: StrictInt = Field(ge=0, le=1000)
+
+    @classmethod
+    def from_record(cls, record: BlacklistSnapshot) -> Self:
+        return cls(
+            snapshot_id=record.snapshot_id,
+            provider=record.provider,
+            provider_generated_at=record.provider_generated_at.replace(tzinfo=UTC),
+            fetched_at=record.fetched_at.replace(tzinfo=UTC),
+            confidence_minimum=record.confidence_minimum,
+            requested_limit=record.requested_limit,
+            returned_count=record.returned_count,
+        )
+
+
+class BlacklistEntryResponse(BaseModel):
+    """Application-facing normalized blacklist entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    ip_version: Literal[4, 6]
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    last_reported_at: datetime | None = None
+
+    @classmethod
+    def from_record(cls, record: BlacklistSnapshotEntry) -> Self:
+        return cls(
+            ip_address=record.ip_address,
+            ip_version=record.ip_version,
+            abuse_confidence_score=record.abuse_confidence_score,
+            country_code=record.country_code,
+            last_reported_at=(
+                record.last_reported_at.replace(tzinfo=UTC)
+                if record.last_reported_at is not None
+                else None
+            ),
+        )
+
+
+class BlacklistPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot: BlacklistSnapshotSummary
+    items: list[BlacklistEntryResponse]
+    limit: StrictInt = Field(ge=1, le=100)
+    offset: StrictInt = Field(ge=0)
+    total: StrictInt = Field(ge=0)
+
+
+class BlacklistSnapshotList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BlacklistSnapshotSummary]
+    limit: StrictInt = Field(ge=1, le=100)
+    offset: StrictInt = Field(ge=0)
+    total: StrictInt = Field(ge=0)
+
+
+class BlacklistLastError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: StrictStr = Field(min_length=1, max_length=64)
+    message: StrictStr = Field(min_length=1, max_length=500)
+
+
+class BlacklistStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["empty", "ready", "syncing", "stale", "degraded"]
+    sync_in_progress: StrictBool
+    latest_snapshot_id: StrictInt | None = Field(default=None, gt=0)
+    latest_provider_generated_at: datetime | None = None
+    latest_fetched_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    rate_limit_limit: StrictInt | None = Field(default=None, ge=0)
+    rate_limit_remaining: StrictInt | None = Field(default=None, ge=0)
+    rate_limit_reset_at: datetime | None = None
+    data_stale: StrictBool
+    last_error: BlacklistLastError | None = None

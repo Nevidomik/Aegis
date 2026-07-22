@@ -109,10 +109,134 @@ class InternalReputationResponse(ReputationResult):
         return validated
 
 
+class InternalBlacklistRequest(BaseModel):
+    """Validated query parameters for one complete blacklist request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence_minimum: int = Field(default=90, ge=0, le=100)
+    limit: int = Field(default=1000, ge=1, le=1000)
+
+
+class BlacklistRequestParameters(BaseModel):
+    """Parameters sent to the provider for a blacklist snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence_minimum: StrictInt = Field(ge=0, le=100)
+    limit: StrictInt = Field(ge=1, le=1000)
+
+
+class RateLimitMetadata(BaseModel):
+    """Normalized AbuseIPDB rate-limit response headers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: StrictInt | None = Field(default=None, ge=0)
+    remaining: StrictInt | None = Field(default=None, ge=0)
+    reset_at: datetime | None = None
+    retry_after_seconds: StrictInt | None = Field(default=None, ge=0)
+
+    @field_validator("reset_at")
+    @classmethod
+    def validate_reset_at(cls, value: datetime | None) -> datetime | None:
+        return require_aware(value)
+
+    @model_validator(mode="after")
+    def validate_remaining(self) -> Self:
+        if (
+            self.limit is not None
+            and self.remaining is not None
+            and self.remaining > self.limit
+        ):
+            raise ValueError("Rate-limit remaining cannot exceed its limit.")
+        return self
+
+
+class BlacklistEntry(BaseModel):
+    """One normalized entry in a complete provider blacklist snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ip_address: StrictStr = Field(min_length=1, max_length=39)
+    ip_version: Literal[4, 6]
+    abuse_confidence_score: StrictInt = Field(ge=0, le=100)
+    country_code: StrictStr | None = Field(default=None, min_length=2, max_length=2)
+    last_reported_at: datetime | None = None
+
+    @field_validator("ip_address")
+    @classmethod
+    def validate_ip_address(cls, value: str) -> str:
+        return normalize_public_ip(value)
+
+    @field_validator("country_code")
+    @classmethod
+    def normalize_country_code(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
+
+    @field_validator("last_reported_at")
+    @classmethod
+    def validate_last_reported_at(cls, value: datetime | None) -> datetime | None:
+        return require_aware(value)
+
+    @model_validator(mode="after")
+    def validate_address_metadata(self) -> Self:
+        if self.ip_version != ip_address(self.ip_address).version:
+            raise ValueError("ip_version does not match ip_address.")
+        return self
+
+
+class BlacklistProviderResult(BaseModel):
+    """Validated provider snapshot before service response metadata is added."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    rate_limit: RateLimitMetadata
+    items: list[BlacklistEntry] = Field(max_length=1000)
+
+    @field_validator("generated_at")
+    @classmethod
+    def validate_generated_at(cls, value: datetime) -> datetime:
+        validated = require_aware(value)
+        assert validated is not None
+        return validated
+
+
+class InternalBlacklistResponse(BlacklistProviderResult):
+    """Complete normalized blacklist snapshot returned to History."""
+
+    provider: Literal["AbuseIPDB"]
+    fetched_at: datetime
+    request: BlacklistRequestParameters
+
+    @field_validator("fetched_at")
+    @classmethod
+    def validate_fetched_at(cls, value: datetime) -> datetime:
+        validated = require_aware(value)
+        assert validated is not None
+        return validated
+
+
+class RetryMetadata(BaseModel):
+    """Safe retry information included with a rate-limit error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retry_after_seconds: StrictInt | None = Field(default=None, ge=0)
+    reset_at: datetime | None = None
+
+    @field_validator("reset_at")
+    @classmethod
+    def validate_reset_at(cls, value: datetime | None) -> datetime | None:
+        return require_aware(value)
+
+
 class ErrorDetail(BaseModel):
     code: StrictStr = Field(min_length=1, max_length=64)
     message: StrictStr = Field(min_length=1, max_length=500)
     request_id: StrictStr = Field(min_length=1, max_length=36)
+    retry: RetryMetadata | None = None
 
 
 class ErrorResponse(BaseModel):

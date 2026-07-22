@@ -38,7 +38,7 @@ Service responsibilities:
 
 More details: [`docs/architecture.md`](docs/architecture.md)
 
-## Planned stack
+## Stack
 
 - Python 3
 - FastAPI
@@ -106,6 +106,15 @@ Run a service from the repository root, for example:
   --port 8000
 ```
 
+When the in-process History blacklist scheduler is enabled, run exactly one
+scheduler-enabled History worker. Do not use multiple Uvicorn workers with
+`BLACKLIST_SCHEDULER_ENABLED=true`; additional request-serving processes must
+disable the scheduler.
+
+The scheduler's default interval is 21600 seconds (six hours). Rate-limit
+metadata may move the next attempt later, while temporary failures use bounded
+5, 15, 30, and 60 minute retries. A known provider reset time is never bypassed.
+
 Verification commands:
 
 ```bash
@@ -124,6 +133,7 @@ The application supports:
 - persistence of successful manual checks;
 - scheduled retrieval of up to 1000 blacklist entries;
 - complete blacklist snapshots in MariaDB;
+- full historical retention of accepted snapshots for the initial implementation;
 - tabular display of the latest successful snapshot;
 - automatic UI refresh when a new local snapshot is available;
 - rate-limit-aware retry behavior;
@@ -139,6 +149,11 @@ Not included yet:
 - multiple reputation providers;
 - Docker or Kubernetes;
 - cloud deployment.
+
+The existing manual-check table and API remain supported. Blacklist
+synchronization writes only to the blacklist snapshot and synchronization
+tables. Browser polling reads local state through UI Service and History
+Service; it never triggers Provider Service or an AbuseIPDB request.
 
 ## Documentation
 

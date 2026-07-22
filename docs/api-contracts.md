@@ -553,8 +553,8 @@ Rules:
 - Provider Service must use its configured AbuseIPDB endpoint;
 - request input must not select or override the upstream host;
 - every returned IP address must be validated and normalized;
-- duplicate normalized IP addresses in one response must be rejected or handled
-  according to a documented deterministic policy;
+- duplicate normalized IP addresses in one response are rejected as
+  `UPSTREAM_INVALID_RESPONSE`;
 - Provider Service must validate provider metadata and every returned item;
 - Provider Service must return no database identifiers;
 - Provider Service must not store the response;
@@ -663,12 +663,14 @@ Application API error contract.
 Blacklist synchronization is an internal History Service process and is not
 triggered by blacklist-read endpoints.
 
-The initial implementation runs inside History Service and can be disabled by
-configuration.
+The initial in-process scheduler runs inside History Service through FastAPI
+lifespan and can be disabled with `BLACKLIST_SCHEDULER_ENABLED`. It is disabled
+by default. A deployment must enable it in only one History Service Uvicorn
+worker; other request-serving workers must disable it.
 
 Default policy:
 
-- base synchronization interval: 21600 seconds;
+- base synchronization interval: 21600 seconds (six hours);
 - maximum provider result size: 1000 addresses;
 - default confidence minimum: 90;
 - only one synchronization may mutate blacklist state at a time.
@@ -690,6 +692,9 @@ snapshot.
 
 A duplicate snapshot must not create a second snapshot or duplicate entry rows.
 
+Every accepted complete snapshot is retained for the initial implementation.
+There is no automatic snapshot deletion, truncation, or retention window.
+
 ## Next-attempt rules
 
 After a successful request with remaining quota:
@@ -703,8 +708,8 @@ When `rate_limit.remaining` is zero:
 ```text
 next_attempt_at = max(
     synchronization_finished_at + configured_interval,
-    rate_limit.reset_at + jitter
-)
+    rate_limit.reset_at
+) + jitter
 ```
 
 After HTTP 429, retry timing priority is:
@@ -716,9 +721,7 @@ After HTTP 429, retry timing priority is:
 A known rate-limit reset time must not be bypassed by exponential backoff.
 
 For temporary connection failures, timeouts, and upstream 5xx failures, History
-Service may use bounded exponential backoff.
-
-Recommended progression:
+Service uses this bounded progression:
 
 ```text
 5 minutes -> 15 minutes -> 30 minutes -> 60 minutes
@@ -727,9 +730,8 @@ Recommended progression:
 Retries must be bounded and must not run continuously.
 
 For invalid provider JSON or an invalid normalized Provider Service response,
-History Service should retain the last successful snapshot and wait until the
-normal configured interval unless an operator explicitly triggers another
-attempt.
+History Service retains the last successful snapshot and waits until the normal
+configured interval.
 
 ---
 
@@ -755,8 +757,8 @@ traffic.
 
 Expected behavior:
 
-- UI Service verifies local initialization and configuration and does not
-  perform a reputation check;
+- UI Service calls History Service readiness and does not perform a reputation
+  or blacklist provider request;
 - History Service verifies local initialization and performs a minimal MariaDB
   connectivity check;
 - Provider Service verifies local initialization and required configuration;
@@ -867,9 +869,7 @@ safe.
 
 # UI refresh behavior
 
-UI may poll blacklist status periodically.
-
-Recommended initial interval:
+The blacklist page polls its UI-owned status endpoint every 30 seconds:
 
 ```text
 30 seconds
@@ -887,7 +887,8 @@ Browser
 UI should:
 
 1. remember the current `latest_snapshot_id`;
-2. request `/api/v1/blacklist/status`;
+2. request UI Service's `/blacklist/status`, which reads History Service's
+   `/api/v1/blacklist/status`;
 3. reload the blacklist table only when `latest_snapshot_id` changes;
 4. retain currently displayed data after a temporary error;
 5. show stale or degraded state without clearing the latest valid snapshot.
@@ -920,3 +921,5 @@ Charts and analytical dashboard endpoints are outside the current scope.
   is not used by blacklist synchronization.
 - The initial implementation supports complete blacklist snapshots of no more
   than 1000 entries.
+- Accepted snapshots have complete historical retention in the initial
+  implementation; no pruning job exists.

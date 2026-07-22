@@ -6,6 +6,9 @@ from ipaddress import ip_address
 
 from provider_service.provider import AbuseIPDBProvider
 from provider_service.schemas import (
+    BlacklistRequestParameters,
+    InternalBlacklistRequest,
+    InternalBlacklistResponse,
     InternalReputationRequest,
     InternalReputationResponse,
 )
@@ -29,6 +32,23 @@ class ReputationProxyService:
             max_age_days=request.max_age_days,
             checked_at=self.clock(),
             **reputation.model_dump(),
+        )
+
+    async def blacklist(
+        self,
+        request: InternalBlacklistRequest,
+        provider: AbuseIPDBProvider,
+    ) -> InternalBlacklistResponse:
+        """Return a complete normalized snapshot without persistence."""
+        snapshot = await provider.blacklist(request.confidence_minimum, request.limit)
+        return InternalBlacklistResponse(
+            provider="AbuseIPDB",
+            fetched_at=self.clock(),
+            request=BlacklistRequestParameters(
+                confidence_minimum=request.confidence_minimum,
+                limit=request.limit,
+            ),
+            **snapshot.model_dump(),
         )
 
 

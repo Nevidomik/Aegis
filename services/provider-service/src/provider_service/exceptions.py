@@ -1,5 +1,7 @@
 """Application-specific Provider failures."""
 
+from datetime import datetime
+
 
 class ApplicationError(Exception):
     """A safe failure that can be returned through the public API."""
@@ -34,12 +36,19 @@ class AbuseIPDBAuthenticationError(ApplicationError):
 
 
 class RateLimitExceededError(ApplicationError):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        retry_after_seconds: int | None = None,
+        reset_at: datetime | None = None,
+    ) -> None:
         super().__init__(
             status_code=429,
             code="RATE_LIMIT_EXCEEDED",
             message="The reputation provider rate limit has been exceeded.",
         )
+        self.retry_after_seconds = retry_after_seconds
+        self.reset_at = reset_at
 
 
 class UpstreamRequestRejectedError(ApplicationError):

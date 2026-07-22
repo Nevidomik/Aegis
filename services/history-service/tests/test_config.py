@@ -36,3 +36,17 @@ def test_provider_configuration_is_separate_from_database_credentials() -> None:
 
     assert str(settings.provider_service_url) == "http://provider.test/"
     assert settings.provider_timeout_seconds == 3
+
+
+def test_blacklist_sync_configuration_has_safe_bounded_defaults() -> None:
+    settings = Settings(
+        mariadb_database="aegis_history",
+        mariadb_user="history",
+        mariadb_password="secret",
+    )
+
+    assert settings.blacklist_confidence_minimum == 90
+    assert settings.blacklist_scheduler_enabled is False
+    assert settings.blacklist_sync_interval_seconds == 21600
+    assert settings.blacklist_maximum_temporary_attempts == 4
+    assert settings.blacklist_maximum_jitter_seconds == 30

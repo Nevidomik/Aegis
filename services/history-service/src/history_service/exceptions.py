@@ -1,5 +1,7 @@
 """Safe application and Provider dependency failures."""
 
+from datetime import datetime
+
 
 class ApplicationError(Exception):
     """A failure safe to expose through the application API."""
@@ -9,6 +11,8 @@ class ApplicationError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.retry_after_seconds: int | None = None
+        self.reset_at: datetime | None = None
 
 
 class InvalidIPAddressError(ApplicationError):
@@ -30,19 +34,19 @@ class NonPublicIPAddressError(ApplicationError):
 
 
 class ProviderServiceUnavailableError(ApplicationError):
-    def __init__(self) -> None:
+    def __init__(self, *, code: str = "BACKEND_UNAVAILABLE") -> None:
         super().__init__(
             status_code=503,
-            code="BACKEND_UNAVAILABLE",
+            code=code,
             message="The reputation service is temporarily unavailable.",
         )
 
 
 class ProviderServiceInvalidResponseError(ApplicationError):
-    def __init__(self) -> None:
+    def __init__(self, *, code: str = "BACKEND_INVALID_RESPONSE") -> None:
         super().__init__(
             status_code=502,
-            code="BACKEND_INVALID_RESPONSE",
+            code=code,
             message="The reputation service returned an invalid response.",
         )
 
@@ -68,9 +72,19 @@ PROXY_ERROR_MAP: dict[str, tuple[int, str, str]] = {
         "PROVIDER_AUTHENTICATION_FAILED",
         "The reputation provider rejected its credentials.",
     ),
+    "UPSTREAM_AUTHENTICATION_FAILED": (
+        503,
+        "UPSTREAM_AUTHENTICATION_FAILED",
+        "The reputation provider rejected its credentials.",
+    ),
     "ABUSEIPDB_UNAVAILABLE": (
         503,
         "PROVIDER_UNAVAILABLE",
+        "The reputation provider is temporarily unavailable.",
+    ),
+    "UPSTREAM_UNAVAILABLE": (
+        503,
+        "UPSTREAM_UNAVAILABLE",
         "The reputation provider is temporarily unavailable.",
     ),
     "UPSTREAM_TIMEOUT": (
@@ -81,14 +95,22 @@ PROXY_ERROR_MAP: dict[str, tuple[int, str, str]] = {
 }
 
 
-def map_proxy_error(code: str) -> ApplicationError:
+def map_proxy_error(
+    code: str,
+    *,
+    retry_after_seconds: int | None = None,
+    reset_at: datetime | None = None,
+) -> ApplicationError:
     """Translate a known internal proxy code into an application error."""
     mapped = PROXY_ERROR_MAP.get(code)
     if mapped is None:
         return ProviderServiceInvalidResponseError()
     status_code, application_code, message = mapped
-    return ApplicationError(
+    error = ApplicationError(
         status_code=status_code,
         code=application_code,
         message=message,
     )
+    error.retry_after_seconds = retry_after_seconds
+    error.reset_at = reset_at
+    return error

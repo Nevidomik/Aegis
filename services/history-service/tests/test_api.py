@@ -61,6 +61,22 @@ async def test_readiness_reports_database_failure(
 
 
 @pytest.mark.anyio
+async def test_health_endpoints_never_call_provider(
+    client: AsyncClient, override_dependency: Any
+) -> None:
+    provider = Mock()
+    override_dependency(get_provider_client, provider)
+
+    live = await client.get("/health/live")
+    ready = await client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert ready.status_code == 200
+    provider.get_blacklist.assert_not_called()
+    provider.check.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_obsolete_internal_history_routes_return_404(
     client: AsyncClient,
 ) -> None:

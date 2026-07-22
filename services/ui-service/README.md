@@ -1,7 +1,8 @@
 # UI Service
 
-The UI service renders a single HTML page with Jinja2. Browsers submit checks to
-UI, and UI communicates only with History Service's application API.
+The UI service renders the manual-check and blacklist pages with Jinja2.
+Browsers communicate with UI, and UI communicates only with History Service's
+application API.
 
 ## Configuration
 
@@ -31,8 +32,17 @@ uv sync --locked --all-packages --all-extras
 UI reuses one lifecycle-owned HTTPX client for all History requests and closes
 it during application shutdown.
 
-The page is available at `http://127.0.0.1:8000/`. The UI contains no AbuseIPDB,
-Provider Service, or database configuration.
+The manual-check page is available at `http://127.0.0.1:8000/`, and the tabular
+blacklist page is available at `http://127.0.0.1:8000/blacklist`. Charts and
+analytical dashboards are outside the current scope. The UI contains no
+AbuseIPDB, Provider Service, or database configuration.
+
+The blacklist page polls UI Service's same-origin `/blacklist/status` endpoint
+every 30 seconds. UI Service reads status from History Service, which reads
+MariaDB. The browser reloads the page only when `latest_snapshot_id` changes;
+unchanged snapshots and temporary polling errors leave the displayed table in
+place. Polling pauses while the document is hidden. It never calls Provider
+Service, triggers synchronization, or consumes AbuseIPDB quota.
 
 Route tests replace the application client and make no live service calls:
 
