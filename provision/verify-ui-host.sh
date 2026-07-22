@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly UI_URL="http://192.168.56.10:8000"
+readonly UI_URL="http://192.168.100.10:8000"
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "Aegis UI host verification failed: curl is not installed" >&2

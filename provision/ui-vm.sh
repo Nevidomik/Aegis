@@ -6,9 +6,9 @@ readonly ENVIRONMENT_FILE="${ENVIRONMENT_DIRECTORY}/ui.env"
 readonly SERVICE_FILE="/etc/systemd/system/aegis-ui.service"
 readonly SERVICE_DIRECTORY="/opt/aegis/ui-service"
 readonly VENV_DIRECTORY="${SERVICE_DIRECTORY}/.venv"
-readonly UI_ADDRESS="192.168.56.10"
+readonly UI_ADDRESS="192.168.100.10"
 readonly UI_PORT="8000"
-readonly HISTORY_URL="http://192.168.56.11:8002"
+readonly HISTORY_URL="http://192.168.100.11:8002"
 
 fail() {
   echo "Aegis UI provisioning failed: $*" >&2

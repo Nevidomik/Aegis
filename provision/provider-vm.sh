@@ -7,7 +7,7 @@ readonly ENVIRONMENT_FILE="${ENVIRONMENT_DIRECTORY}/provider.env"
 readonly SERVICE_FILE="/etc/systemd/system/aegis-provider.service"
 readonly SERVICE_DIRECTORY="/opt/aegis/provider-service"
 readonly VENV_DIRECTORY="${SERVICE_DIRECTORY}/.venv"
-readonly PROVIDER_ADDRESS="192.168.56.12"
+readonly PROVIDER_ADDRESS="192.168.100.12"
 readonly PROVIDER_PORT="8001"
 
 fail() {

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly PRIVATE_ADDRESS="192.168.56.13"
-readonly HISTORY_ADDRESS="192.168.56.11"
+readonly PRIVATE_ADDRESS="192.168.100.13"
+readonly HISTORY_ADDRESS="192.168.100.11"
 readonly DATABASE_NAME="aegis_history"
 readonly DATABASE_USER="aegis_history"
 readonly PASSWORD_FILE="/tmp/aegis-mariadb-password"
 readonly MARIADB_CONFIG="/etc/mysql/mariadb.conf.d/60-aegis.cnf"
+readonly DUMP_FILE="/vagrant/init_data.sql"
 
 fail() {
   echo "Aegis MariaDB provisioning failed: $*" >&2

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 VAGRANTFILE_API_VERSION = "2"
-UBUNTU_BOX = "ubuntu/noble64"
+UBUNTU_BOX = "bento/ubuntu-24.04"
 PROVIDER_SECRET_FILE = File.expand_path(
   ENV.fetch("AEGIS_PROVIDER_SECRET_FILE", "~/.config/aegis/abuseipdb-api-key"),
 )
@@ -11,23 +11,23 @@ DATABASE_SECRET_FILE = File.expand_path(
 
 VMS = {
   "db-vm" => {
-    ip: "192.168.56.13",
+    ip: "192.168.100.13",
     cpus: 1,
     memory: 1024,
     database: true,
     firewall_role: "db",
   },
   "provider-vm" => {
-    ip: "192.168.56.12",
+    ip: "192.168.100.12",
     cpus: 1,
-    memory: 768,
+    memory: 1024,
     service: "provider-service",
     package: "provider_service",
     deploy_provider: true,
     firewall_role: "provider",
   },
   "history-vm" => {
-    ip: "192.168.56.11",
+    ip: "192.168.100.11",
     cpus: 1,
     memory: 1024,
     service: "history-service",
@@ -36,9 +36,9 @@ VMS = {
     firewall_role: "history",
   },
   "ui-vm" => {
-    ip: "192.168.56.10",
+    ip: "192.168.100.10",
     cpus: 1,
-    memory: 768,
+    memory: 1024,
     service: "ui-service",
     package: "ui_service",
     deploy_ui: true,
@@ -52,7 +52,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   VMS.each do |name, settings|
     config.vm.define name do |machine|
       machine.vm.hostname = name
-      machine.vm.network "private_network", ip: settings.fetch(:ip)
+      machine.vm.network "public_network", ip: settings.fetch(:ip), bridge: "Ethernet 4"
 
       # VirtualBox-specific resource settings are intentionally kept together.
       machine.vm.provider "virtualbox" do |virtualbox|

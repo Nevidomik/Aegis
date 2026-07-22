@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 
 readonly ROLE="${1:-}"
-readonly PRIVATE_NETWORK="192.168.56.0/24"
-readonly UI_ADDRESS="192.168.56.10"
-readonly HISTORY_ADDRESS="192.168.56.11"
-readonly PROVIDER_ADDRESS="192.168.56.12"
-readonly DATABASE_ADDRESS="192.168.56.13"
+readonly PRIVATE_NETWORK="192.168.100.0/24"
+readonly UI_ADDRESS="192.168.100.10"
+readonly HISTORY_ADDRESS="192.168.100.11"
+readonly PROVIDER_ADDRESS="192.168.100.12"
+readonly DATABASE_ADDRESS="192.168.100.13"
 
 fail() {
   echo "Aegis firewall provisioning failed: $*" >&2

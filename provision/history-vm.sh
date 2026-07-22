@@ -7,10 +7,10 @@ readonly ENVIRONMENT_FILE="${ENVIRONMENT_DIRECTORY}/history.env"
 readonly SERVICE_FILE="/etc/systemd/system/aegis-history.service"
 readonly SERVICE_DIRECTORY="/opt/aegis/history-service"
 readonly VENV_DIRECTORY="${SERVICE_DIRECTORY}/.venv"
-readonly HISTORY_ADDRESS="192.168.56.11"
+readonly HISTORY_ADDRESS="192.168.100.11"
 readonly HISTORY_PORT="8002"
-readonly PROVIDER_URL="http://192.168.56.12:8001"
-readonly DATABASE_ADDRESS="192.168.56.13"
+readonly PROVIDER_URL="http://192.168.100.12:8001"
+readonly DATABASE_ADDRESS="192.168.100.13"
 readonly DATABASE_PORT="3306"
 
 fail() {

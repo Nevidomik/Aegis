@@ -109,33 +109,33 @@ for vm in db-vm provider-vm history-vm ui-vm; do
 done
 
 for target in \
-  "ui-vm:192.168.56.10" \
-  "history-vm:192.168.56.11" \
-  "provider-vm:192.168.56.12" \
-  "db-vm:192.168.56.13"; do
+  "ui-vm:192.168.100.10" \
+  "history-vm:192.168.100.11" \
+  "provider-vm:192.168.100.12" \
+  "db-vm:192.168.100.13"; do
   vm="${target%%:*}"
   address="${target#*:}"
   check "${vm} private address ${address} responds" private_ip_responds "${address}"
 done
 
 check "Provider liveness" guest_http_ok provider-vm \
-  http://192.168.56.12:8001/health/live
+  http://192.168.100.12:8001/health/live
 check "Provider readiness (quota-free)" guest_http_ok provider-vm \
-  http://192.168.56.12:8001/health/ready
+  http://192.168.100.12:8001/health/ready
 check "History liveness" guest_http_ok history-vm \
-  http://192.168.56.11:8002/health/live
+  http://192.168.100.11:8002/health/live
 check "History readiness" guest_http_ok history-vm \
-  http://192.168.56.11:8002/health/ready
+  http://192.168.100.11:8002/health/ready
 check "UI liveness" curl --fail --silent --show-error \
-  http://192.168.56.10:8000/health/live
+  http://192.168.100.10:8000/health/live
 check "UI readiness" curl --fail --silent --show-error \
-  http://192.168.56.10:8000/health/ready
+  http://192.168.100.10:8000/health/ready
 check "UI main page from host" curl --fail --silent --show-error \
-  http://192.168.56.10:8000/
+  http://192.168.100.10:8000/
 check "UI blacklist page from host" curl --fail --silent --show-error \
-  http://192.168.56.10:8000/blacklist
+  http://192.168.100.10:8000/blacklist
 check "History blacklist status" guest_http_ok ui-vm \
-  http://192.168.56.11:8002/api/v1/blacklist/status
+  http://192.168.100.11:8002/api/v1/blacklist/status
 
 check "MariaDB systemd unit is active" unit_is_active db-vm mariadb.service
 check "Provider systemd unit is active" unit_is_active provider-vm \
@@ -146,10 +146,10 @@ check "UI systemd unit is active" unit_is_active ui-vm aegis-ui.service
 
 # History readiness executes SELECT 1 against its configured MariaDB session.
 check "History can read MariaDB" guest_http_ok history-vm \
-  http://192.168.56.11:8002/health/ready
+  http://192.168.100.11:8002/health/ready
 # UI readiness calls History readiness, proving the UI-to-History path.
 check "UI can communicate with History" guest_http_ok ui-vm \
-  http://192.168.56.10:8000/health/ready
+  http://192.168.100.10:8000/health/ready
 
 check "Provider process runs as aegis" unit_runs_as_aegis provider-vm \
   aegis-provider.service
@@ -181,7 +181,7 @@ PY
         -H 'Content-Type: application/json' \
         -H 'X-Request-ID: ${request_id}' \
         --data '{\"ip_address\":\"${canonical_ip}\",\"max_age_days\":30}' \
-        http://192.168.56.11:8002/api/v1/checks"
+        http://192.168.100.11:8002/api/v1/checks"
   else
     fail "Live verification IP is not a global IPv4 or IPv6 address"
   fi

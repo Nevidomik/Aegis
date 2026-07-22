@@ -61,10 +61,10 @@ CREATE TABLE `blacklist_snapshot_entries` (
   PRIMARY KEY (`entry_id`),
   UNIQUE KEY `uq_blacklist_entries_snapshot_ip` (`snapshot_id`,`ip_address`),
   KEY `ix_blacklist_entries_page` (`snapshot_id`,`abuse_confidence_score` DESC,`last_reported_at` DESC,`ip_address`),
-  CONSTRAINT `1` FOREIGN KEY (`snapshot_id`) REFERENCES `blacklist_snapshots` (`snapshot_id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_snapshot_entries_snapshot_id` FOREIGN KEY (`snapshot_id`) REFERENCES `blacklist_snapshots` (`snapshot_id`) ON DELETE CASCADE,
   CONSTRAINT `ck_blacklist_entries_ip_version` CHECK (`ip_version` in (4,6)),
   CONSTRAINT `ck_blacklist_entries_score` CHECK (`abuse_confidence_score` between 0 and 100)
-) ENGINE=InnoDB AUTO_INCREMENT=1029 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1029 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1108,7 +1108,7 @@ CREATE TABLE `blacklist_snapshots` (
   CONSTRAINT `ck_blacklist_snapshots_rate_remaining` CHECK (`rate_limit_remaining` is null or `rate_limit_remaining` >= 0),
   CONSTRAINT `ck_blacklist_snapshots_retry_after` CHECK (`retry_after_seconds` is null or `retry_after_seconds` >= 0),
   CONSTRAINT `ck_blacklist_snapshots_rate_consistency` CHECK (`rate_limit_limit` is null or `rate_limit_remaining` is null or `rate_limit_remaining` <= `rate_limit_limit`)
-) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1154,7 +1154,7 @@ CREATE TABLE `blacklist_sync_runs` (
   UNIQUE KEY `request_id` (`request_id`),
   KEY `ix_blacklist_sync_runs_snapshot` (`snapshot_id`),
   KEY `ix_blacklist_sync_runs_status_next` (`status`,`next_attempt_at`),
-  CONSTRAINT `1` FOREIGN KEY (`snapshot_id`) REFERENCES `blacklist_snapshots` (`snapshot_id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_sync_runs_snapshot_id` FOREIGN KEY (`snapshot_id`) REFERENCES `blacklist_snapshots` (`snapshot_id`) ON DELETE SET NULL,
   CONSTRAINT `ck_blacklist_sync_runs_status` CHECK (`status` in ('running','succeeded','duplicate','rate_limited','failed')),
   CONSTRAINT `ck_blacklist_sync_runs_confidence` CHECK (`confidence_minimum` between 0 and 100),
   CONSTRAINT `ck_blacklist_sync_runs_requested_limit` CHECK (`requested_limit` between 1 and 1000),
@@ -1163,7 +1163,7 @@ CREATE TABLE `blacklist_sync_runs` (
   CONSTRAINT `ck_blacklist_sync_runs_rate_remaining` CHECK (`rate_limit_remaining` is null or `rate_limit_remaining` >= 0),
   CONSTRAINT `ck_blacklist_sync_runs_retry_after` CHECK (`retry_after_seconds` is null or `retry_after_seconds` >= 0),
   CONSTRAINT `ck_blacklist_sync_runs_rate_consistency` CHECK (`rate_limit_limit` is null or `rate_limit_remaining` is null or `rate_limit_remaining` <= `rate_limit_limit`)
-) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1214,7 +1214,7 @@ CREATE TABLE `ip_check_history` (
   CONSTRAINT `ck_ip_check_history_max_age` CHECK (`max_age_days` between 1 and 365),
   CONSTRAINT `ck_ip_check_history_distinct_users` CHECK (`num_distinct_users` >= 0),
   CONSTRAINT `ck_ip_check_history_reports` CHECK (`total_reports` >= 0)
-) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
