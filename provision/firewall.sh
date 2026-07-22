@@ -34,6 +34,8 @@ case "${ROLE}" in
   ui)
     ufw allow from "${PRIVATE_NETWORK}" to any port 8000 proto tcp \
       comment "Aegis UI from host-only network"
+    ufw allow from "${PRIVATE_NETWORK}" to any port 8002 proto tcp \
+      comment "Aegis History from network"
     ufw deny out to "${PROVIDER_ADDRESS}" port 8001 proto tcp \
       comment "Block UI direct Provider access"
     ufw deny out to "${DATABASE_ADDRESS}" port 3306 proto tcp \
