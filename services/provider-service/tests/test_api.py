@@ -1,7 +1,8 @@
 from uuid import UUID
 
 import pytest
-from backend_service.exceptions import (
+from httpx2 import AsyncClient
+from provider_service.exceptions import (
     AbuseIPDBAuthenticationError,
     AbuseIPDBUnavailableError,
     RateLimitExceededError,
@@ -9,8 +10,7 @@ from backend_service.exceptions import (
     UpstreamRequestRejectedError,
     UpstreamTimeoutError,
 )
-from backend_service.provider import get_reputation_provider
-from httpx2 import AsyncClient
+from provider_service.provider import get_reputation_provider
 
 REQUEST_ID = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
 

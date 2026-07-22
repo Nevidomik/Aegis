@@ -1,4 +1,4 @@
-"""Thin HTTP routing and public error mapping for Backend."""
+"""Thin HTTP routing and public error mapping for Provider."""
 
 from collections.abc import Awaitable, Callable
 from typing import Annotated
@@ -8,15 +8,15 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from backend_service.exceptions import ApplicationError
-from backend_service.provider import AbuseIPDBProvider, get_reputation_provider
-from backend_service.schemas import (
+from provider_service.exceptions import ApplicationError
+from provider_service.provider import AbuseIPDBProvider, get_reputation_provider
+from provider_service.schemas import (
     ErrorDetail,
     ErrorResponse,
     InternalReputationRequest,
     InternalReputationResponse,
 )
-from backend_service.service import (
+from provider_service.service import (
     ReputationProxyService,
     get_reputation_proxy_service,
 )
@@ -66,13 +66,13 @@ async def request_id_middleware(
 
 @router.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
-    """Confirm that the Backend process is running."""
+    """Confirm that the Provider process is running."""
     return {"status": "ok"}
 
 
 @router.get("/health/ready", tags=["health"])
 async def readiness() -> dict[str, str]:
-    """Confirm that Backend initialized with its required configuration."""
+    """Confirm that Provider initialized with its required configuration."""
     return {"status": "ready"}
 
 

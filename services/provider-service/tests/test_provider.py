@@ -1,7 +1,7 @@
 from ipaddress import ip_address
 
 import pytest
-from backend_service.provider import FakeReputationProvider
+from provider_service.provider import FakeReputationProvider
 
 
 @pytest.mark.anyio

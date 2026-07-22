@@ -1,7 +1,7 @@
 # History Service
 
 The History service is Aegis's application backend and persistence owner. It is
-the only service that connects to MariaDB, and it calls Backend Service's
+the only service that connects to MariaDB, and it calls Provider Service's
 internal proxy for normalized reputation data. It uses synchronous HTTPX,
 SQLAlchemy sessions, and Alembic migrations.
 
@@ -22,8 +22,8 @@ MARIADB_PORT=3306
 MARIADB_DATABASE=aegis_history
 MARIADB_USER=aegis_history
 MARIADB_PASSWORD=replace-me
-BACKEND_SERVICE_URL=http://127.0.0.1:8001
-BACKEND_TIMEOUT_SECONDS=10
+PROVIDER_SERVICE_URL=http://127.0.0.1:8001
+PROVIDER_TIMEOUT_SECONDS=10
 ```
 
 `MARIADB_DATABASE`, `MARIADB_USER`, and `MARIADB_PASSWORD` are required. The
@@ -34,10 +34,10 @@ credentials.
 
 History exposes `POST /api/v1/checks`, `GET /api/v1/checks`, and
 `GET /api/v1/checks/{history_id}` for UI Service. A valid `X-Request-ID` is
-propagated to Backend Service and used for create idempotency. Successful proxy
+propagated to Provider Service and used for create idempotency. Successful proxy
 responses are validated before persistence; failed lookups are not persisted.
 
-History exposes no internal persistence API. Backend Service never calls History
+History exposes no internal persistence API. Provider Service never calls History
 Service; it only returns normalized provider data to History's application
 orchestration layer.
 

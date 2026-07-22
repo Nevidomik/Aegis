@@ -13,10 +13,10 @@ from history_service.models import IpCheckHistory
 from history_service.repository import HistoryRepository
 from history_service.schemas import (
     ApplicationCheckRequest,
-    BackendReputationRequest,
-    BackendReputationResponse,
     CheckCreate,
     HistoryListQuery,
+    ProviderReputationRequest,
+    ProviderReputationResponse,
 )
 
 
@@ -44,12 +44,12 @@ class ListResult:
     total: int
 
 
-class BackendGateway(Protocol):
+class ProviderGateway(Protocol):
     """Minimal internal proxy behavior required by application orchestration."""
 
     def check(
-        self, payload: BackendReputationRequest, *, request_id: str
-    ) -> BackendReputationResponse: ...
+        self, payload: ProviderReputationRequest, *, request_id: str
+    ) -> ProviderReputationResponse: ...
 
 
 class HistoryService:
@@ -141,7 +141,7 @@ def parse_public_address(value: str) -> IPv4Address | IPv6Address:
 
 
 class ApplicationService:
-    """Orchestrate application requests across persistence and Backend."""
+    """Orchestrate application requests across persistence and Provider."""
 
     def __init__(self, history: HistoryService | None = None) -> None:
         self.history = history or HistoryService()
@@ -151,7 +151,7 @@ class ApplicationService:
         session: Session,
         payload: ApplicationCheckRequest,
         request_id: UUID,
-        backend: BackendGateway,
+        provider: ProviderGateway,
     ) -> CreateResult:
         address = parse_public_address(payload.ip_address)
         normalized_ip = str(address)
@@ -164,8 +164,8 @@ class ApplicationService:
                 raise IdempotencyConflictError
             return CreateResult(record=existing, created=False)
 
-        backend_result = backend.check(
-            BackendReputationRequest(
+        provider_result = provider.check(
+            ProviderReputationRequest(
                 ip_address=normalized_ip,
                 max_age_days=payload.max_age_days,
             ),
@@ -173,7 +173,7 @@ class ApplicationService:
         )
         persistence_payload = CheckCreate(
             request_id=request_id,
-            **backend_result.model_dump(),
+            **provider_result.model_dump(),
         )
         return self.history.create(session, persistence_payload)
 

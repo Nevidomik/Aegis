@@ -1,1 +1,0 @@
-"""Aegis backend service."""

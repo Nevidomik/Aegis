@@ -1,8 +1,8 @@
 import httpx
 import pytest
-from backend_service.config import Settings
-from backend_service.main import app, create_abuseipdb_http_client, lifespan
-from backend_service.provider import AbuseIPDBProvider
+from provider_service.config import Settings
+from provider_service.main import app, create_abuseipdb_http_client, lifespan
+from provider_service.provider import AbuseIPDBProvider
 
 
 def settings() -> Settings:
@@ -36,9 +36,9 @@ async def test_lifespan_reuses_one_client_and_closes_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     abuseipdb_client = create_abuseipdb_http_client(settings())
-    monkeypatch.setattr("backend_service.main.get_settings", settings)
+    monkeypatch.setattr("provider_service.main.get_settings", settings)
     monkeypatch.setattr(
-        "backend_service.main.create_abuseipdb_http_client", lambda _: abuseipdb_client
+        "provider_service.main.create_abuseipdb_http_client", lambda _: abuseipdb_client
     )
 
     async with lifespan(app):

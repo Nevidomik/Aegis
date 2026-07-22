@@ -1,4 +1,4 @@
-"""Safe application and Backend dependency failures."""
+"""Safe application and Provider dependency failures."""
 
 
 class ApplicationError(Exception):
@@ -29,7 +29,7 @@ class NonPublicIPAddressError(ApplicationError):
         )
 
 
-class BackendUnavailableError(ApplicationError):
+class ProviderServiceUnavailableError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
             status_code=503,
@@ -38,7 +38,7 @@ class BackendUnavailableError(ApplicationError):
         )
 
 
-class BackendInvalidResponseError(ApplicationError):
+class ProviderServiceInvalidResponseError(ApplicationError):
     def __init__(self) -> None:
         super().__init__(
             status_code=502,
@@ -85,7 +85,7 @@ def map_proxy_error(code: str) -> ApplicationError:
     """Translate a known internal proxy code into an application error."""
     mapped = PROXY_ERROR_MAP.get(code)
     if mapped is None:
-        return BackendInvalidResponseError()
+        return ProviderServiceInvalidResponseError()
     status_code, application_code, message = mapped
     return ApplicationError(
         status_code=status_code,

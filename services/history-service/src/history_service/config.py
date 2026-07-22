@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     mariadb_database: str
     mariadb_user: str
     mariadb_password: SecretStr
-    backend_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8001")
-    backend_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    provider_service_url: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:8001")
+    provider_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     def database_url(self) -> URL:
         """Build a safely escaped MariaDB connection URL."""

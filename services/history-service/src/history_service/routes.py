@@ -11,9 +11,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from history_service.backend_client import BackendClient, get_backend_client
 from history_service.database import get_session
 from history_service.exceptions import ApplicationError
+from history_service.provider_client import ProviderClient, get_provider_client
 from history_service.schemas import (
     ApplicationCheckRequest,
     ErrorDetail,
@@ -117,10 +117,10 @@ def create_application_check(
     response: Response,
     session: Annotated[Session, Depends(get_session)],
     service: Annotated[ApplicationService, Depends(get_application_service)],
-    backend: Annotated[BackendClient, Depends(get_backend_client)],
+    provider: Annotated[ProviderClient, Depends(get_provider_client)],
 ) -> HistoryRecord:
-    """Validate, resolve idempotency, call Backend, and persist one result."""
-    result = service.check(session, payload, request.state.request_id, backend)
+    """Validate, resolve idempotency, call Provider, and persist one result."""
+    result = service.check(session, payload, request.state.request_id, provider)
     if not result.created:
         response.status_code = status.HTTP_200_OK
     return HistoryRecord.from_record(result.record)

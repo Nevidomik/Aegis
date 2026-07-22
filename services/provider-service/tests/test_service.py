@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 
 import pytest
-from backend_service.provider import FakeReputationProvider
-from backend_service.schemas import InternalReputationRequest
-from backend_service.service import ReputationProxyService
+from provider_service.provider import FakeReputationProvider
+from provider_service.schemas import InternalReputationRequest
+from provider_service.service import ReputationProxyService
 
 CHECKED_AT = datetime(2026, 7, 15, 18, 30, tzinfo=UTC)
 

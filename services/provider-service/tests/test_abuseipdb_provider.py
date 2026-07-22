@@ -2,7 +2,7 @@ from ipaddress import ip_address
 
 import httpx
 import pytest
-from backend_service.exceptions import (
+from provider_service.exceptions import (
     AbuseIPDBAuthenticationError,
     AbuseIPDBUnavailableError,
     RateLimitExceededError,
@@ -10,7 +10,7 @@ from backend_service.exceptions import (
     UpstreamRequestRejectedError,
     UpstreamTimeoutError,
 )
-from backend_service.provider import AbuseIPDBProvider
+from provider_service.provider import AbuseIPDBProvider
 
 
 def valid_response(ip_value: str = "8.8.8.8") -> dict[str, object]:

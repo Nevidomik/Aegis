@@ -4,8 +4,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from ipaddress import ip_address
 
-from backend_service.provider import AbuseIPDBProvider
-from backend_service.schemas import (
+from provider_service.provider import AbuseIPDBProvider
+from provider_service.schemas import (
     InternalReputationRequest,
     InternalReputationResponse,
 )

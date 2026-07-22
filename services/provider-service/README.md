@@ -1,6 +1,6 @@
-# Backend Service
+# Provider Service
 
-The Backend is an internal AbuseIPDB proxy. It accepts normalized lookup
+The Provider is an internal AbuseIPDB proxy. It accepts normalized lookup
 requests from History Service, validates and normalizes AbuseIPDB responses,
 and returns a provider-independent internal result. It has no persistence or
 history responsibilities.
@@ -10,10 +10,10 @@ history responsibilities.
 Create the service-local file from the repository root:
 
 ```bash
-cp services/backend-service/.env.example services/backend-service/.env
+cp services/provider-service/.env.example services/provider-service/.env
 ```
 
-Backend loads that file explicitly regardless of the current working directory:
+Provider loads that file explicitly regardless of the current working directory:
 
 ```dotenv
 ABUSEIPDB_BASE_URL=https://api.abuseipdb.com
@@ -33,13 +33,13 @@ Install the locked workspace and run from the repository root:
 
 ```bash
 uv sync --locked --all-packages --all-extras
-.venv/bin/uvicorn backend_service.main:app \
-  --app-dir services/backend-service/src \
+.venv/bin/uvicorn provider_service.main:app \
+  --app-dir services/provider-service/src \
   --host 127.0.0.1 \
   --port 8001
 ```
 
-Backend maintains one lifecycle-owned HTTPX client for AbuseIPDB. It is reused
+Provider maintains one lifecycle-owned HTTPX client for AbuseIPDB. It is reused
 across requests and closed during shutdown.
 
 `POST /internal/v1/reputation-checks` is the internal provider-proxy boundary
@@ -53,5 +53,5 @@ Tests replace the reputation provider or use HTTPX mock transports. The default
 suite makes no live AbuseIPDB calls:
 
 ```bash
-.venv/bin/pytest services/backend-service/tests
+.venv/bin/pytest services/provider-service/tests
 ```

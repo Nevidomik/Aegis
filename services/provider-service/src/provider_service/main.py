@@ -1,4 +1,4 @@
-"""FastAPI application for the Aegis backend service."""
+"""FastAPI application for the Aegis provider service."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -7,10 +7,10 @@ import httpx
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from backend_service.config import Settings, get_settings
-from backend_service.exceptions import ApplicationError
-from backend_service.provider import AbuseIPDBProvider
-from backend_service.routes import (
+from provider_service.config import Settings, get_settings
+from provider_service.exceptions import ApplicationError
+from provider_service.provider import AbuseIPDBProvider
+from provider_service.routes import (
     application_exception_handler,
     request_id_middleware,
     router,
@@ -48,7 +48,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         await abuseipdb_client.aclose()
 
 
-app = FastAPI(title="Aegis Backend Service", lifespan=lifespan)
+app = FastAPI(title="Aegis Provider Service", lifespan=lifespan)
 app.middleware("http")(request_id_middleware)
 app.add_exception_handler(ApplicationError, application_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)

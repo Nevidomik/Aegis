@@ -1,4 +1,4 @@
-"""Application-specific Backend failures."""
+"""Application-specific Provider failures."""
 
 
 class ApplicationError(Exception):

@@ -32,7 +32,7 @@ UI reuses one lifecycle-owned HTTPX client for all History requests and closes
 it during application shutdown.
 
 The page is available at `http://127.0.0.1:8000/`. The UI contains no AbuseIPDB,
-Backend Service, or database configuration.
+Provider Service, or database configuration.
 
 Route tests replace the application client and make no live service calls:
 

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from backend_service.schemas import (
+from provider_service.schemas import (
     InternalReputationRequest,
     InternalReputationResponse,
 )

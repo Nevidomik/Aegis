@@ -7,9 +7,9 @@ import httpx
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from history_service.backend_client import BackendClient
 from history_service.config import Settings, get_settings
 from history_service.exceptions import ApplicationError
+from history_service.provider_client import ProviderClient
 from history_service.routes import (
     application_exception_handler,
     idempotency_conflict_exception_handler,
@@ -21,20 +21,20 @@ from history_service.routes import (
 from history_service.service import HistoryUnavailableError, IdempotencyConflictError
 
 
-def create_backend_http_client(settings: Settings) -> httpx.Client:
-    """Create History's reusable client for the internal Backend API."""
+def create_provider_http_client(settings: Settings) -> httpx.Client:
+    """Create History's reusable client for the internal Provider API."""
     return httpx.Client(
-        base_url=str(settings.backend_service_url).rstrip("/"),
-        timeout=settings.backend_timeout_seconds,
+        base_url=str(settings.provider_service_url).rstrip("/"),
+        timeout=settings.provider_timeout_seconds,
         follow_redirects=False,
     )
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Open and close the Backend client exactly once."""
-    http_client = create_backend_http_client(get_settings())
-    application.state.backend_client = BackendClient(http_client)
+    """Open and close the Provider client exactly once."""
+    http_client = create_provider_http_client(get_settings())
+    application.state.provider_client = ProviderClient(http_client)
     try:
         yield
     finally:

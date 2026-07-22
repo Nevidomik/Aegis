@@ -1,5 +1,5 @@
 import pytest
-from backend_service.config import SERVICE_ENV_FILE, Settings
+from provider_service.config import SERVICE_ENV_FILE, Settings
 from pydantic import ValidationError
 
 
@@ -25,7 +25,7 @@ def test_abuseipdb_base_url_must_use_https() -> None:
         )
 
 
-def test_backend_env_file_is_absolute_and_service_local() -> None:
+def test_provider_env_file_is_absolute_and_service_local() -> None:
     assert SERVICE_ENV_FILE.is_absolute()
     assert SERVICE_ENV_FILE == Settings.model_config["env_file"]
-    assert SERVICE_ENV_FILE.parent.name == "backend-service"
+    assert SERVICE_ENV_FILE.parent.name == "provider-service"

@@ -2,9 +2,9 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import pytest
-from backend_service.main import app
-from backend_service.provider import FakeReputationProvider, get_reputation_provider
 from httpx2 import ASGITransport, AsyncClient
+from provider_service.main import app
+from provider_service.provider import FakeReputationProvider, get_reputation_provider
 
 
 @pytest.fixture

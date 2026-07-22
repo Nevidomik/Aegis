@@ -94,7 +94,7 @@ Strict restrictions:
 
     history-service (Main Backend): Core logic, IP/request validation, idempotency, MariaDB persistence & migrations, app-level errors.
 
-    backend-service (API Proxy): AbuseIPDB integration (credentials, HTTPX calls, timeouts), provider data normalization, error mapping. (Must not touch DB).
+    provider-service (API Proxy): AbuseIPDB integration (credentials, HTTPX calls, timeouts), provider data normalization, error mapping. (Must not touch DB).
 
     ui-service: HTML/Jinja2 rendering, form handling, UI error presentation.
 
@@ -120,7 +120,7 @@ Strict restrictions:
 
     IP Validation: Use Python's ipaddress module (no regex!). Accept global IPv4/IPv6, reject local/private/multicast. Normalize to compressed format. Both services validate inputs.
 
-    Proxy (backend-service) strict rules: HTTPX with timeouts. Validate upstream JSON via Pydantic. Return normalized data (never raw). Do not persist, implement idempotency, or log API keys.
+    Proxy (provider-service) strict rules: HTTPX with timeouts. Validate upstream JSON via Pydantic. Return normalized data (never raw). Do not persist, implement idempotency, or log API keys.
 
 7. Orchestration & Persistence (history-service)
 
@@ -284,7 +284,7 @@ The blacklist synchronization flow must not write to it.
 
 12. Agent Workflow
 
-    Boundary Enforcement: The completed architecture is UI ➔ History ➔ Backend ➔ AbuseIPDB. Backend must never orchestrate persistence or call History, and UI must never call Backend directly.
+    Boundary Enforcement: The completed architecture is UI ➔ History ➔ Provider ➔ AbuseIPDB. Provider must never orchestrate persistence or call History, and UI must never call Provider directly.
 
     Agent Task Workflow:
 

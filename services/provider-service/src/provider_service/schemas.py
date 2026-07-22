@@ -1,4 +1,4 @@
-"""Pydantic contracts for the internal Backend proxy."""
+"""Pydantic contracts for the internal Provider proxy."""
 
 from datetime import datetime
 from ipaddress import ip_address

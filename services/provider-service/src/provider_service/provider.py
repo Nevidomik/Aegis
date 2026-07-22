@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from backend_service.exceptions import (
+from provider_service.exceptions import (
     AbuseIPDBAuthenticationError,
     AbuseIPDBUnavailableError,
     RateLimitExceededError,
@@ -27,7 +27,7 @@ from backend_service.exceptions import (
     UpstreamRequestRejectedError,
     UpstreamTimeoutError,
 )
-from backend_service.schemas import ReputationResult
+from provider_service.schemas import ReputationResult
 
 
 def _to_camel(value: str) -> str:

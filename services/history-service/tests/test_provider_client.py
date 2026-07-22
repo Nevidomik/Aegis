@@ -2,12 +2,12 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from history_service.backend_client import BackendClient
 from history_service.exceptions import (
-    BackendInvalidResponseError,
-    BackendUnavailableError,
+    ProviderServiceInvalidResponseError,
+    ProviderServiceUnavailableError,
 )
-from history_service.schemas import BackendReputationRequest
+from history_service.provider_client import ProviderClient
+from history_service.schemas import ProviderReputationRequest
 
 REQUEST_ID = "6f5aa064-43e8-4dbb-a544-d60b68af5cbd"
 
@@ -45,10 +45,10 @@ def test_check_calls_only_internal_proxy_and_validates_response() -> None:
         )
 
     with httpx.Client(
-        base_url="http://backend.test", transport=httpx.MockTransport(handler)
+        base_url="http://provider.test", transport=httpx.MockTransport(handler)
     ) as client:
-        result = BackendClient(client).check(
-            BackendReputationRequest(ip_address="8.8.8.8", max_age_days=90),
+        result = ProviderClient(client).check(
+            ProviderReputationRequest(ip_address="8.8.8.8", max_age_days=90),
             request_id=REQUEST_ID,
         )
 
@@ -87,10 +87,10 @@ def test_check_maps_proxy_errors(
             headers={"X-Request-ID": REQUEST_ID},
         )
     )
-    with httpx.Client(base_url="http://backend.test", transport=transport) as client:
+    with httpx.Client(base_url="http://provider.test", transport=transport) as client:
         with pytest.raises(Exception) as captured:
-            BackendClient(client).check(
-                BackendReputationRequest(ip_address="8.8.8.8", max_age_days=90),
+            ProviderClient(client).check(
+                ProviderReputationRequest(ip_address="8.8.8.8", max_age_days=90),
                 request_id=REQUEST_ID,
             )
 
@@ -123,12 +123,12 @@ def test_check_rejects_invalid_or_inconsistent_proxy_responses(
     response: httpx.Response,
 ) -> None:
     with httpx.Client(
-        base_url="http://backend.test",
+        base_url="http://provider.test",
         transport=httpx.MockTransport(lambda _: response),
     ) as client:
-        with pytest.raises(BackendInvalidResponseError):
-            BackendClient(client).check(
-                BackendReputationRequest(ip_address="8.8.8.8", max_age_days=90),
+        with pytest.raises(ProviderServiceInvalidResponseError):
+            ProviderClient(client).check(
+                ProviderReputationRequest(ip_address="8.8.8.8", max_age_days=90),
                 request_id=REQUEST_ID,
             )
 
@@ -138,10 +138,10 @@ def test_check_maps_transport_failure() -> None:
         raise httpx.ConnectError("connection failed", request=request)
 
     with httpx.Client(
-        base_url="http://backend.test", transport=httpx.MockTransport(fail)
+        base_url="http://provider.test", transport=httpx.MockTransport(fail)
     ) as client:
-        with pytest.raises(BackendUnavailableError):
-            BackendClient(client).check(
-                BackendReputationRequest(ip_address="8.8.8.8", max_age_days=90),
+        with pytest.raises(ProviderServiceUnavailableError):
+            ProviderClient(client).check(
+                ProviderReputationRequest(ip_address="8.8.8.8", max_age_days=90),
                 request_id=REQUEST_ID,
             )

@@ -5,10 +5,10 @@ import pytest
 from history_service.models import IpCheckHistory
 from history_service.schemas import (
     ApplicationCheckRequest,
-    BackendReputationRequest,
-    BackendReputationResponse,
     CheckCreate,
     HistoryListQuery,
+    ProviderReputationRequest,
+    ProviderReputationResponse,
 )
 from history_service.service import ApplicationService, HistoryService
 from sqlalchemy import URL, create_engine, delete
@@ -86,19 +86,19 @@ def test_application_lookup_persists_and_resolves_idempotency_against_mariadb() 
     if missing:
         pytest.fail(f"Missing MariaDB test settings: {', '.join(missing)}")
 
-    class FakeBackend:
+    class FakeProvider:
         def __init__(self) -> None:
             self.calls = 0
 
         def check(
-            self, payload: BackendReputationRequest, *, request_id: str
-        ) -> BackendReputationResponse:
+            self, payload: ProviderReputationRequest, *, request_id: str
+        ) -> ProviderReputationResponse:
             self.calls += 1
             data = check_payload(request_id=request_id)
             data.pop("request_id")
             data["ip_address"] = payload.ip_address
             data["max_age_days"] = payload.max_age_days
-            return BackendReputationResponse.model_validate(data)
+            return ProviderReputationResponse.model_validate(data)
 
     url = URL.create(
         "mariadb+pymysql",
@@ -111,19 +111,19 @@ def test_application_lookup_persists_and_resolves_idempotency_against_mariadb() 
     )
     engine = create_engine(url, pool_pre_ping=True)
     request_id = UUID(str(uuid4()))
-    backend = FakeBackend()
+    provider = FakeProvider()
     service = ApplicationService(HistoryService())
     payload = ApplicationCheckRequest(ip_address="8.8.8.8", max_age_days=90)
 
     try:
         with Session(engine, expire_on_commit=False) as session:
-            first = service.check(session, payload, request_id, backend)
-            duplicate = service.check(session, payload, request_id, backend)
+            first = service.check(session, payload, request_id, provider)
+            duplicate = service.check(session, payload, request_id, provider)
 
             assert first.created is True
             assert duplicate.created is False
             assert duplicate.record.id == first.record.id
-            assert backend.calls == 1
+            assert provider.calls == 1
     finally:
         with Session(engine) as cleanup_session:
             cleanup_session.execute(

@@ -1,4 +1,4 @@
-"""Environment-backed Backend configuration."""
+"""Environment-backed Provider configuration."""
 
 from functools import lru_cache
 from pathlib import Path
@@ -10,7 +10,7 @@ SERVICE_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    """Backend dependency settings."""
+    """Provider dependency settings."""
 
     model_config = SettingsConfigDict(
         env_file=SERVICE_ENV_FILE,
@@ -35,5 +35,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return process-wide Backend settings."""
+    """Return process-wide Provider settings."""
     return Settings()

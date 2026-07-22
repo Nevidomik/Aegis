@@ -61,8 +61,8 @@ class ApplicationCheckRequest(BaseModel):
     max_age_days: int = Field(default=30, ge=1, le=365)
 
 
-class BackendReputationRequest(BaseModel):
-    """Strict normalized request sent to Backend."""
+class ProviderReputationRequest(BaseModel):
+    """Strict normalized request sent to Provider."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,8 +78,8 @@ class BackendReputationRequest(BaseModel):
         return normalized
 
 
-class BackendReputationResponse(BaseModel):
-    """Provider-independent response returned by Backend."""
+class ProviderReputationResponse(BaseModel):
+    """Provider-independent response returned by Provider."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -132,7 +132,7 @@ class BackendReputationResponse(BaseModel):
         return self
 
 
-class CheckCreate(BackendReputationResponse):
+class CheckCreate(ProviderReputationResponse):
     """A normalized successful lookup ready for persistence."""
 
     request_id: UUID
@@ -216,8 +216,8 @@ class ErrorResponse(BaseModel):
     error: ErrorDetail
 
 
-class BackendErrorResponse(BaseModel):
-    """Strict error envelope returned by Backend."""
+class ProviderErrorResponse(BaseModel):
+    """Strict error envelope returned by Provider."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -3,8 +3,8 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
-from history_service.backend_client import get_backend_client
-from history_service.exceptions import BackendUnavailableError
+from history_service.exceptions import ProviderServiceUnavailableError
+from history_service.provider_client import get_provider_client
 from history_service.schemas import HistoryListQuery
 from history_service.service import (
     ApplicationService,
@@ -101,20 +101,20 @@ async def test_application_create_propagates_request_id_and_returns_record(
             self.created = True
 
         def check(
-            self, session: object, payload: object, request_id: UUID, backend: object
+            self, session: object, payload: object, request_id: UUID, provider: object
         ) -> CreateResult:
             self.call = {
                 "session": session,
                 "payload": payload,
                 "request_id": request_id,
-                "backend": backend,
+                "provider": provider,
             }
             return CreateResult(record=history_record(), created=self.created)
 
     service = RecordingApplicationService()
-    backend = object()
+    provider = object()
     override_dependency(get_application_service, service)
-    override_dependency(get_backend_client, backend)
+    override_dependency(get_provider_client, provider)
 
     response = await client.post(
         "/api/v1/checks",
@@ -128,7 +128,7 @@ async def test_application_create_propagates_request_id_and_returns_record(
     assert response.json()["request_id"] == str(check_payload()["request_id"])
     assert service.call is not None
     assert service.call["request_id"] == UUID(str(check_payload()["request_id"]))
-    assert service.call["backend"] is backend
+    assert service.call["provider"] is provider
 
     service.created = False
     duplicate = await client.post(
@@ -141,13 +141,13 @@ async def test_application_create_propagates_request_id_and_returns_record(
 
 
 @pytest.mark.anyio
-async def test_application_create_rejects_nonpublic_ip_without_backend_call(
+async def test_application_create_rejects_nonpublic_ip_without_provider_call(
     client: AsyncClient, override_dependency: Any
 ) -> None:
     history = Mock(spec=HistoryService)
-    backend = Mock()
+    provider = Mock()
     override_dependency(get_application_service, ApplicationService(history))
-    override_dependency(get_backend_client, backend)
+    override_dependency(get_provider_client, provider)
 
     response = await client.post(
         "/api/v1/checks",
@@ -157,7 +157,7 @@ async def test_application_create_rejects_nonpublic_ip_without_backend_call(
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "NON_PUBLIC_IP_ADDRESS"
-    backend.check.assert_not_called()
+    provider.check.assert_not_called()
     history.get_by_request_id.assert_not_called()
 
 
@@ -167,10 +167,10 @@ async def test_application_proxy_failure_uses_safe_error_envelope(
 ) -> None:
     class FailingApplicationService:
         def check(self, *_: object) -> CreateResult:
-            raise BackendUnavailableError
+            raise ProviderServiceUnavailableError
 
     override_dependency(get_application_service, FailingApplicationService())
-    override_dependency(get_backend_client, object())
+    override_dependency(get_provider_client, object())
     request_id = str(check_payload()["request_id"])
 
     response = await client.post(
