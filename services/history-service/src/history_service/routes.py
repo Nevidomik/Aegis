@@ -16,7 +16,6 @@ from history_service.database import get_session
 from history_service.exceptions import ApplicationError
 from history_service.schemas import (
     ApplicationCheckRequest,
-    CheckCreate,
     ErrorDetail,
     ErrorResponse,
     HistoryList,
@@ -170,67 +169,6 @@ def get_application_check(
     return HistoryRecord.from_record(record)
 
 
-@router.post(
-    "/internal/v1/checks",
-    response_model=HistoryRecord,
-    status_code=status.HTTP_201_CREATED,
-    responses={409: {"model": ErrorResponse}},
-    tags=["history"],
-)
-def create_check(
-    payload: CheckCreate,
-    response: Response,
-    session: Annotated[Session, Depends(get_session)],
-    service: Annotated[HistoryService, Depends(get_history_service)],
-) -> HistoryRecord:
-    result = service.create(session, payload)
-    if not result.created:
-        response.status_code = status.HTTP_200_OK
-    return HistoryRecord.from_record(result.record)
-
-
-@router.get(
-    "/internal/v1/checks",
-    response_model=HistoryList,
-    tags=["history"],
-)
-def list_checks(
-    query: Annotated[HistoryListQuery, Query()],
-    session: Annotated[Session, Depends(get_session)],
-    service: Annotated[HistoryService, Depends(get_history_service)],
-) -> HistoryList:
-    result = service.list(session, query)
-    return HistoryList(
-        items=[HistoryRecord.from_record(record) for record in result.records],
-        limit=query.limit,
-        offset=query.offset,
-        total=result.total,
-    )
-
-
-@router.get(
-    "/internal/v1/checks/{history_id}",
-    response_model=HistoryRecord,
-    responses={404: {"model": ErrorResponse}},
-    tags=["history"],
-)
-def get_check(
-    history_id: int,
-    request: Request,
-    session: Annotated[Session, Depends(get_session)],
-    service: Annotated[HistoryService, Depends(get_history_service)],
-) -> HistoryRecord | JSONResponse:
-    record = service.get(session, history_id)
-    if record is None:
-        return error_response(
-            status_code=status.HTTP_404_NOT_FOUND,
-            code="HISTORY_RECORD_NOT_FOUND",
-            message="The requested history record does not exist.",
-            request_id=request_id_from(request),
-        )
-    return HistoryRecord.from_record(record)
-
-
 async def validation_exception_handler(
     request: Request, _: RequestValidationError
 ) -> JSONResponse:
@@ -259,15 +197,10 @@ async def unavailable_exception_handler(
     request: Request, _: HistoryUnavailableError
 ) -> JSONResponse:
     """Hide database error details from callers."""
-    is_internal = request.url.path.startswith("/internal/")
     return error_response(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        code="HISTORY_UNAVAILABLE" if is_internal else "DATABASE_UNAVAILABLE",
-        message=(
-            "History storage is temporarily unavailable."
-            if is_internal
-            else "The database is temporarily unavailable."
-        ),
+        code="DATABASE_UNAVAILABLE",
+        message="The database is temporarily unavailable.",
         request_id=request_id_from(request),
     )
 

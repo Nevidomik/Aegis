@@ -79,6 +79,9 @@ Restrictions:
 
 *Only Backend Service stores and uses the AbuseIPDB API key.*
 
+History Service exposes no internal persistence endpoints. Backend Service has
+no route or client for writing to History Service.
+
 ---
 
 ## Request flow

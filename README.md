@@ -8,16 +8,17 @@ Small multi-service application for checking the reputation of public IPv4 and I
 Browser
   │
   ▼
-UI Service ──HTTP──> Backend Service ──HTTPS──> AbuseIPDB
-                         │
-                         └──HTTP──> History Service ──SQL──> MariaDB
+UI Service ──HTTP──> History Service ──HTTP──> Backend Service
+                         │                    │
+                         ▼                    └──HTTPS──> AbuseIPDB
+                      MariaDB
 ```
 
 Service responsibilities:
 
-- **UI Service** — renders the form, current result, and history. Communicates only with Backend.
-- **Backend Service** — validates IP addresses, calls AbuseIPDB, normalizes responses, and sends successful results to History.
-- **History Service** — owns persistence and is the only service allowed to access MariaDB.
+- **UI Service** — renders the form, current result, and history. Communicates only with History Service.
+- **History Service** — is the application backend, orchestrates checks, and exclusively owns MariaDB persistence.
+- **Backend Service** — is an internal AbuseIPDB proxy that returns normalized provider results only to History Service.
 
 More details: [`docs/architecture.md`](docs/architecture.md)
 

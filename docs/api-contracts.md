@@ -199,6 +199,7 @@ The Internal Backend Proxy API is exposed by `backend-service` and consumed **on
 
 * UI Service must not call these endpoints.
 * Backend Service does not persist results and does not expose history endpoints.
+* History Service does not expose an internal persistence API to Backend Service.
 
 ### Create provider reputation check
 
@@ -408,3 +409,4 @@ UI Service -> History Service -> Backend Service
 * Unknown fields in the Backend internal response should be rejected by History Service unless forward-compatible handling is explicitly adopted.
 * UI must depend on the Application API rather than provider-specific fields or internal proxy routes.
 * Backend Service must not expose application history endpoints.
+* History Service's check and history resources exist only under `/api/v1/*`.

@@ -37,8 +37,9 @@ History exposes `POST /api/v1/checks`, `GET /api/v1/checks`, and
 propagated to Backend Service and used for create idempotency. Successful proxy
 responses are validated before persistence; failed lookups are not persisted.
 
-The existing `/internal/v1/checks` persistence routes remain temporarily for
-the legacy Backend orchestration path during migration.
+History exposes no internal persistence API. Backend Service never calls History
+Service; it only returns normalized provider data to History's application
+orchestration layer.
 
 Install the service from the repository root:
 

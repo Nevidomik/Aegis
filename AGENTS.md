@@ -102,9 +102,9 @@ History Flow: UI ➔ History ➔ MariaDB.
     Workflow: Iterate in small steps. Avoid full rewrites. Ask for approval before changing architecture, DB engine, or security models.
 
 
-11. Legacy Refactoring & Agent Workflow
+11. Agent Workflow
 
-    Legacy Context: The repo is migrating away from an old flow (UI ➔ Backend ➔ History). Do not preserve obsolete calls. Remove them. Backend must no longer orchestrate persistence, and UI must not call Backend directly.
+    Boundary Enforcement: The completed architecture is UI ➔ History ➔ Backend ➔ AbuseIPDB. Backend must never orchestrate persistence or call History, and UI must never call Backend directly.
 
     Agent Task Workflow:
 
@@ -115,4 +115,3 @@ History Flow: UI ➔ History ➔ MariaDB.
         Implement: Make the smallest coherent change. Do not do a single massive rewrite of all services.
 
         Test & Verify: Add/update tests. Run checks (pytest, ruff, etc.). Review diffs for unrelated changes.
-
