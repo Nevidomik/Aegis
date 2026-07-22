@@ -24,7 +24,7 @@ Responsibilities:
 - display current results, history, and user-facing errors.
 
 Restrictions:
-- no direct Backend Service access;
+- no direct Provider Service access;
 - no direct AbuseIPDB access;
 - no database access;
 - no API keys or database credentials;
@@ -33,30 +33,39 @@ Restrictions:
 *The UI communicates only with History Service.*
 
 ### History Service
-History Service acts as the application backend and persistence owner.
+History Service acts as the application provider and persistence owner.
 
 Responsibilities:
 - expose the application-facing API used by UI Service;
 - validate and normalize IPv4 and IPv6 addresses;
 - reject non-public addresses;
 - orchestrate reputation lookups;
-- call Backend Service for normalized AbuseIPDB data;
-- validate Backend Service responses;
+- call Provider Service for normalized AbuseIPDB data;
+- validate Provider Service responses;
 - persist successful lookup results;
 - return current results and history;
 - implement request idempotency;
 - manage database schema changes through Alembic.
 
+Additional responsibilities:
+
+- periodically synchronize AbuseIPDB blacklist data;
+- preserve complete historical snapshots;
+- record synchronization attempts and failures;
+- use provider rate-limit metadata when determining the next attempt;
+- expose locally persisted blacklist data to UI;
+- retain the latest successful snapshot after an update failure.
+
 Restrictions:
 - no direct AbuseIPDB access;
 - no AbuseIPDB API key;
 - no arbitrary upstream URLs from user input;
-- no provider-specific HTTP implementation outside the Backend Service client.
+- no provider-specific HTTP implementation outside the Provider Service client.
 
 *History Service is the only service allowed to access MariaDB.*
 
-### Backend Service
-Backend Service acts as an internal AbuseIPDB proxy and provider adapter.
+### Provider Service
+Provider Service acts as an internal AbuseIPDB proxy and provider adapter.
 
 Responsibilities:
 - expose an internal reputation lookup API;
@@ -68,6 +77,16 @@ Responsibilities:
 - use explicit HTTP timeouts;
 - preserve request ID propagation.
 
+Additional responsibilities:
+
+- call the AbuseIPDB blacklist endpoint;
+- validate every returned blacklist entry;
+- normalize IPv4 and IPv6 addresses;
+- extract rate-limit response headers;
+- return normalized snapshot metadata and entries.
+
+Provider Service does not decide when synchronization should occur.
+
 Restrictions:
 - no public application history API;
 - no direct UI access;
@@ -77,72 +96,69 @@ Restrictions:
 - no calls to History Service;
 - no arbitrary upstream URLs from request input.
 
-*Only Backend Service stores and uses the AbuseIPDB API key.*
+*Only Provider Service stores and uses the AbuseIPDB API key.*
 
-History Service exposes no internal persistence endpoints. Backend Service has
+History Service exposes no internal persistence endpoints. Provider Service has
 no route or client for writing to History Service.
 
 ---
 
-## Request flow
-
-### Create a reputation check
+## Blacklist synchronization flow
 
 ```text
-1. User submits an IP address.
-2. UI sends POST /api/v1/checks to History Service.
-3. History Service validates and normalizes the address.
-4. History Service resolves the request ID and checks idempotency.
-5. History Service sends POST /internal/v1/reputation-checks to Backend Service.
-6. Backend Service calls AbuseIPDB.
-7. Backend Service validates and normalizes the upstream response.
-8. Backend Service returns the normalized provider result to History Service.
-9. History Service persists the successful result in MariaDB.
-10. History Service returns the persisted application result to UI.
-
+1. History Service determines that synchronization is due.
+2. History Service creates a synchronization run.
+3. History Service requests GET /internal/v1/blacklist from Provider Service.
+4. Provider Service requests GET /api/v2/blacklist from AbuseIPDB.
+5. Provider Service validates and normalizes the response.
+6. Provider Service returns snapshot data and rate-limit metadata.
+7. History Service checks whether the snapshot is new.
+8. History Service stores the snapshot and every entry in one transaction.
+9. History Service records the successful synchronization run.
+10. UI later reads the latest persisted snapshot from History Service.
 ```
 
-**Diagram:**
-
 ```text
-User
-  |
-  v
-UI Service
-  |
-  v
+History Service scheduler
+       |
+       v
+Provider Service
+       |
+       v
+AbuseIPDB
+       |
+       v
+Provider Service
+       |
+       v
 History Service
-  | \
-  |  \-> MariaDB
-  |
-  v
-Backend Service
-  |
-  v
-AbuseIPDB
-
+       |
+       v
+MariaDB
 ```
 
-**The response path is:**
+## UI refresh flow
+
+The browser periodically asks UI Service whether the latest snapshot changed.
+
+UI Service reads snapshot state from History Service.
 
 ```text
-AbuseIPDB
-  -> Backend Service
-  -> History Service
-  -> UI Service
-  -> User
-
-```
-
-### Read history
-
-```text
-User
+Browser polling
   -> UI Service
   -> History Service
   -> MariaDB
-
 ```
+
+Browser polling must not trigger a Provider Service or AbuseIPDB request.
+
+If the snapshot identifier has not changed, UI should not reload the complete
+table.
+
+If synchronization fails, UI continues displaying the latest successful
+snapshot and shows a stale-data or synchronization warning where appropriate.
+
+
 
 ---
 
@@ -160,7 +176,7 @@ UI Service communicates only with this API.
 
 ### Provider boundary
 
-Backend Service owns the internal provider API:
+Provider Service owns the internal provider API:
 
 * `POST /internal/v1/reputation-checks`
 
@@ -171,16 +187,16 @@ Only History Service may call this endpoint.
 
 ## Failure behavior
 
-* **Invalid request schema**: reject in History Service; do not call Backend Service; do not create history.
-* **Invalid or non-public IP**: reject in History Service before calling Backend Service; do not create history.
-* **Backend Service unavailable**: History Service returns a dependency-unavailable error; do not create history.
-* **AbuseIPDB timeout**: Backend Service returns an internal timeout error; History Service maps it to an application error; do not create history.
-* **AbuseIPDB authentication failure**: Backend Service returns a stable internal authentication error; do not create history.
-* **Invalid AbuseIPDB response**: Backend Service returns an invalid-upstream-response error; do not create history.
-* **Invalid Backend Service response**: History Service treats it as an invalid dependency response; do not create history.
+* **Invalid request schema**: reject in History Service; do not call Provider Service; do not create history.
+* **Invalid or non-public IP**: reject in History Service before calling Provider Service; do not create history.
+* **Provider Service unavailable**: History Service returns a dependency-unavailable error; do not create history.
+* **AbuseIPDB timeout**: Provider Service returns an internal timeout error; History Service maps it to an application error; do not create history.
+* **AbuseIPDB authentication failure**: Provider Service returns a stable internal authentication error; do not create history.
+* **Invalid AbuseIPDB response**: Provider Service returns an invalid-upstream-response error; do not create history.
+* **Invalid Provider Service response**: History Service treats it as an invalid dependency response; do not create history.
 * **Database unavailable**: History Service returns a service-unavailable error; do not report the operation as successfully stored.
 * **Persistence failure after a successful provider lookup**: return a persistence-related service error; do not report a successful application result.
-* **Duplicate request ID with equivalent payload**: return the existing persisted result; do not call Backend Service again where the existing result can be resolved safely; do not create a second row.
+* **Duplicate request ID with equivalent payload**: return the existing persisted result; do not call Provider Service again where the existing result can be resolved safely; do not create a second row.
 * **Duplicate request ID with different payload**: return `409 IDEMPOTENCY_CONFLICT`.
 
 ---
@@ -204,7 +220,7 @@ Only History Service may call this endpoint.
 * history queries;
 * database migrations.
 
-**Backend Service owns:**
+**Provider Service owns:**
 
 * AbuseIPDB credentials;
 * AbuseIPDB request construction;
@@ -217,7 +233,7 @@ Only History Service may call this endpoint.
 * persisted lookup records;
 * Alembic version state.
 
-*Note: AbuseIPDB responses are treated as untrusted external data. Backend Service must validate them before returning an internal response. History Service must validate Backend Service responses before persistence.*
+*Note: AbuseIPDB responses are treated as untrusted external data. Provider Service must validate them before returning an internal response. History Service must validate Provider Service responses before persistence.*
 
 ---
 
@@ -226,14 +242,14 @@ Only History Service may call this endpoint.
 ### UI Service
 
 * **May receive:** `HISTORY_SERVICE_URL`
-* **Must not receive:** `BACKEND_SERVICE_URL`, `ABUSEIPDB_API_KEY`, `DATABASE_URL`, `MARIADB_PASSWORD`
+- **Must not receive:** `PROVIDER_SERVICE_URL`, `ABUSEIPDB_API_KEY`, `DATABASE_URL`, `MARIADB_PASSWORD`
 
 ### History Service
 
-* **May receive:** `BACKEND_SERVICE_URL`, `DATABASE_URL`, `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD`
+- **May receive:** `PROVIDER_SERVICE_URL`, `DATABASE_URL`, `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD`
 * **Must not receive:** `ABUSEIPDB_API_KEY`
 
-### Backend Service
+### Provider Service
 
 * **May receive:** `ABUSEIPDB_BASE_URL`, `ABUSEIPDB_API_KEY`, HTTP timeout settings
 * **Must not receive:** `HISTORY_SERVICE_URL`, `DATABASE_URL`, `MARIADB_PASSWORD`
@@ -249,7 +265,7 @@ Only History Service may call this endpoint.
 * Service-to-service responses are validated.
 * Public errors do not expose stack traces, credentials, SQL, raw upstream responses, or internal URLs.
 * UI does not receive provider credentials.
-* Backend Service does not receive database credentials.
+* Provider Service does not receive database credentials.
 * Tests do not call the live AbuseIPDB API by default.
 
 ---
@@ -260,7 +276,7 @@ Each request should use a UUID request ID propagated through:
 `X-Request-ID: <uuid>`
 
 The propagation path is:
-`UI Service -> History Service -> Backend Service`
+`UI Service -> History Service -> Provider Service`
 
 Services write logs to stdout and include:
 
@@ -272,8 +288,8 @@ Services write logs to stdout and include:
 * duration;
 * dependency name where relevant.
 
-* **History Service** should log database and Backend Service dependency events without logging credentials or complete request bodies unnecessarily.
-* **Backend Service** should identify AbuseIPDB as the upstream dependency without logging API keys or authorization headers.
+* **History Service** should log database and Provider Service dependency events without logging credentials or complete request bodies unnecessarily.
+* **Provider Service** should identify AbuseIPDB as the upstream dependency without logging API keys or authorization headers.
 
 ---
 
@@ -292,9 +308,9 @@ Each service exposes:
 **History Service**
 
 * **live:** confirms the process can serve requests.
-* **ready:** confirms local initialization and MariaDB availability. (Readiness may also verify that Backend Service configuration is valid, but must not perform a real AbuseIPDB lookup).
+* **ready:** confirms local initialization and MariaDB availability. (Readiness may also verify that Provider Service configuration is valid, but must not perform a real AbuseIPDB lookup).
 
-**Backend Service**
+**Provider Service**
 
 * **live:** confirms the process can serve requests.
 * **ready:** confirms local initialization and required configuration. (It must not consume AbuseIPDB quota during readiness checks).
@@ -308,7 +324,7 @@ For a single Ubuntu test server, the intended topology is:
 ```text
 UI Service       0.0.0.0:8000
 History Service  127.0.0.1:8002
-Backend Service  127.0.0.1:8001
+Provider Service  127.0.0.1:8001
 MariaDB          127.0.0.1:3306
 
 ```
@@ -320,7 +336,7 @@ The internal request direction is:
 ```text
 UI :8000
   -> History :8002
-  -> Backend :8001
+  -> Provider :8001
   -> AbuseIPDB
 
 ```

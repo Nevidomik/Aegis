@@ -1,6 +1,12 @@
 # Aegis
 
-Small multi-service application for checking the reputation of public IPv4 and IPv6 addresses through the AbuseIPDB API and storing successful checks in MariaDB.
+A small multi-service IP reputation application.
+
+Aegis checks public IPv4 and IPv6 addresses through AbuseIPDB and periodically
+synchronizes a limited AbuseIPDB blacklist into MariaDB.
+
+The web interface displays the latest locally persisted blacklist snapshot and
+updates automatically when a newer snapshot becomes available.
 
 ## Architecture
 
@@ -8,17 +14,27 @@ Small multi-service application for checking the reputation of public IPv4 and I
 Browser
   │
   ▼
-UI Service ──HTTP──> History Service ──HTTP──> Backend Service
+UI Service ──HTTP──> History Service ──HTTP──> Provider Service
                          │                    │
                          ▼                    └──HTTPS──> AbuseIPDB
                       MariaDB
 ```
 
+Scheduled blacklist flow:
+
+History Service scheduler
+  -> Provider Service
+  -> AbuseIPDB Blacklist API
+  -> History Service
+  -> MariaDB
+
 Service responsibilities:
 
-- **UI Service** — renders the form, current result, and history. Communicates only with History Service.
-- **History Service** — is the application backend, orchestrates checks, and exclusively owns MariaDB persistence.
-- **Backend Service** — is an internal AbuseIPDB proxy that returns normalized provider results only to History Service.
+- **UI Service** — renders the interface and communicates only with History Service.
+
+- **History Service** — acts as the application backend, exclusively owns MariaDB, runs blacklist synchronization, and stores complete blacklist snapshots.
+
+- **Provider Service** — acts as an internal AbuseIPDB adapter. It validates and normalizes provider responses but does not persist data or run scheduled jobs.
 
 More details: [`docs/architecture.md`](docs/architecture.md)
 
@@ -40,7 +56,7 @@ More details: [`docs/architecture.md`](docs/architecture.md)
 ```text
 services/
 ├── ui-service/
-├── backend-service/
+├── provider-service/
 └── history-service/
 
 docs/
@@ -57,7 +73,7 @@ the repository root:
 
 ```bash
 cp services/ui-service/.env.example services/ui-service/.env
-cp services/backend-service/.env.example services/backend-service/.env
+cp services/provider-service/.env.example services/provider-service/.env
 cp services/history-service/.env.example services/history-service/.env
 ```
 
@@ -101,21 +117,27 @@ migration commands in the History Service README run from the repository root.
 
 ## Current scope
 
-The first version must support:
+The application supports:
 
-- checking a public IPv4 or IPv6 address;
-- displaying the normalized AbuseIPDB result;
-- storing every successful check;
-- viewing previous checks;
-- clear separation between the three services.
+- validation of public IPv4 and IPv6 addresses;
+- normalized individual AbuseIPDB lookups;
+- persistence of successful manual checks;
+- scheduled retrieval of up to 1000 blacklist entries;
+- complete blacklist snapshots in MariaDB;
+- tabular display of the latest successful snapshot;
+- automatic UI refresh when a new local snapshot is available;
+- rate-limit-aware retry behavior;
+- explicit separation between UI, application, and provider responsibilities.
 
 Not included yet:
 
 - authentication;
-- Docker or Kubernetes;
-- CI/CD;
+- charts and analytical dashboards;
+- cron or a dedicated scheduler process;
 - message queues;
 - caching;
+- multiple reputation providers;
+- Docker or Kubernetes;
 - cloud deployment.
 
 ## Documentation
