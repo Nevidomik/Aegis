@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -19,6 +19,7 @@ FETCHED_AT = datetime(2026, 7, 22, 12, 0, 2, tzinfo=UTC)
 
 def snapshot() -> BlacklistSnapshot:
     return BlacklistSnapshot(
+        delivery_id="662ecba0-8918-433d-bc75-b14de17851f1",
         provider="AbuseIPDB",
         provider_generated_at=GENERATED_AT,
         fetched_at=FETCHED_AT,
@@ -64,6 +65,61 @@ def test_add_snapshot_builds_relationship_and_flushes_without_commit() -> None:
     session.add.assert_called_once_with(record)
     session.flush.assert_called_once_with()
     session.commit.assert_not_called()
+
+
+def test_snapshot_delivery_identity_is_uniquely_indexed() -> None:
+    snapshots = Base.metadata.tables["blacklist_snapshots"]
+
+    assert snapshots.c.delivery_id.unique is True
+    assert snapshots.c.received_at.nullable is True
+    assert snapshots.c.added_count.nullable is True
+    assert snapshots.c.removed_count.nullable is True
+    assert snapshots.c.turnover_percent.nullable is True
+    assert any(
+        index.name == "ix_blacklist_snapshots_change_baseline"
+        for index in snapshots.indexes
+    )
+
+
+def test_previous_snapshot_ips_are_scoped_to_provider_and_request_config() -> None:
+    session = Mock(spec=Session)
+    session.scalar.return_value = 42
+    session.scalars.return_value = ["8.8.8.8", "8.8.8.8", "1.1.1.1"]
+
+    result = BlacklistRepository().get_previous_snapshot_ip_addresses(
+        session,
+        provider="AbuseIPDB",
+        confidence_minimum=90,
+        requested_limit=1000,
+    )
+
+    baseline_sql = str(session.scalar.call_args.args[0])
+    entries_sql = str(session.scalars.call_args.args[0])
+    assert "blacklist_snapshots.provider" in baseline_sql
+    assert "blacklist_snapshots.confidence_minimum" in baseline_sql
+    assert "blacklist_snapshots.requested_limit" in baseline_sql
+    assert "blacklist_snapshots.snapshot_id DESC" in baseline_sql
+    assert "blacklist_snapshot_entries.snapshot_id" in entries_sql
+    assert result == {"8.8.8.8", "1.1.1.1"}
+
+
+def test_turnover_range_query_reads_snapshot_summary_columns_only() -> None:
+    session = Mock(spec=Session)
+    session.execute.return_value = []
+
+    result = BlacklistRepository().turnover_snapshots_between(
+        session,
+        provider="AbuseIPDB",
+        from_=GENERATED_AT,
+        to=GENERATED_AT + timedelta(days=1),
+    )
+
+    sql = str(session.execute.call_args.args[0])
+    assert "blacklist_snapshots.turnover_percent" in sql
+    assert "blacklist_snapshots.added_count" in sql
+    assert "blacklist_snapshots.removed_count" in sql
+    assert "blacklist_snapshot_entries" not in sql
+    assert result == []
 
 
 def test_duplicate_constraints_and_foreign_key_cascades_are_declared() -> None:

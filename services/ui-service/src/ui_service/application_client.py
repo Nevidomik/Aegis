@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime
 
 import httpx
 from fastapi import Request
@@ -12,6 +13,7 @@ from ui_service.schemas import (
     BlacklistAnalytics,
     BlacklistPage,
     BlacklistStatus,
+    BlacklistTurnover,
     CheckResult,
     HistoryPage,
     ReadinessResponse,
@@ -99,6 +101,28 @@ class ApplicationClient:
             response, BlacklistAnalytics, request_id=request_id
         )
 
+    async def blacklist_turnover(
+        self,
+        *,
+        from_: datetime,
+        to: datetime,
+        interval: str,
+        request_id: str,
+    ) -> BlacklistTurnover:
+        response = await self._request(
+            "GET",
+            "/api/v1/blacklist/analytics/turnover",
+            request_id=request_id,
+            params={
+                "from": from_.isoformat().replace("+00:00", "Z"),
+                "to": to.isoformat().replace("+00:00", "Z"),
+                "interval": interval,
+            },
+        )
+        return self._validated_response(
+            response, BlacklistTurnover, request_id=request_id
+        )
+
     async def ready(self, *, request_id: str) -> None:
         response = await self._request("GET", "/health/ready", request_id=request_id)
         self._validated_response(response, ReadinessResponse, request_id=request_id)
@@ -109,7 +133,7 @@ class ApplicationClient:
         path: str,
         *,
         request_id: str,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
         json: object | None = None,
     ) -> httpx.Response:
         try:

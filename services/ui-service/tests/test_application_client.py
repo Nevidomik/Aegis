@@ -8,6 +8,7 @@ from ui_service.schemas import (
     BlacklistAnalytics,
     BlacklistPage,
     BlacklistStatus,
+    BlacklistTurnover,
     CheckResult,
 )
 
@@ -162,6 +163,21 @@ async def test_client_calls_history_blacklist_endpoints() -> None:
                 "data_stale": False,
                 "last_error": None,
             }
+        elif request.url.path.endswith("/analytics/turnover"):
+            body = {
+                "from": "2026-06-23T00:00:00Z",
+                "to": "2026-07-23T00:00:00Z",
+                "interval": "day",
+                "points": [
+                    {
+                        "period_start": "2026-07-22T00:00:00Z",
+                        "turnover_percent": None,
+                        "added_count": None,
+                        "removed_count": None,
+                        "snapshot_id": None,
+                    }
+                ],
+            }
         elif request.url.path.endswith("/analytics"):
             body = {
                 "latest_snapshot": {
@@ -219,17 +235,30 @@ async def test_client_calls_history_blacklist_endpoints() -> None:
         analytics = await client.blacklist_analytics(
             pair_limit=10, request_id=REQUEST_ID
         )
+        turnover = await client.blacklist_turnover(
+            from_=datetime(2026, 6, 23, tzinfo=UTC),
+            to=datetime(2026, 7, 23, tzinfo=UTC),
+            interval="day",
+            request_id=REQUEST_ID,
+        )
 
     assert isinstance(status, BlacklistStatus)
     assert isinstance(page, BlacklistPage)
     assert isinstance(analytics, BlacklistAnalytics)
+    assert isinstance(turnover, BlacklistTurnover)
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/api/v1/blacklist/status"),
         ("GET", "/api/v1/blacklist"),
         ("GET", "/api/v1/blacklist/analytics"),
+        ("GET", "/api/v1/blacklist/analytics/turnover"),
     ]
     assert dict(requests[1].url.params) == {"limit": "100", "offset": "100"}
     assert dict(requests[2].url.params) == {"pair_limit": "10"}
+    assert dict(requests[3].url.params) == {
+        "from": "2026-06-23T00:00:00Z",
+        "to": "2026-07-23T00:00:00Z",
+        "interval": "day",
+    }
     assert all(request.headers["X-Request-ID"] == REQUEST_ID for request in requests)
 
 

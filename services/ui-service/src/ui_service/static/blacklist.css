@@ -185,6 +185,100 @@ details summary {
   margin: 0 0 0.5rem;
 }
 
+.turnover-heading-row {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.turnover-heading-row h2 {
+  margin-top: 0;
+}
+
+.range-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.range-controls a {
+  border: 1px solid #174ea6;
+  border-radius: 0.35rem;
+  padding: 0.35rem 0.6rem;
+}
+
+.range-controls a[aria-current="page"] {
+  background: #174ea6;
+  color: white;
+  text-decoration: none;
+}
+
+.turnover-chart-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  margin: 1rem 0;
+}
+
+.svg-chart svg {
+  display: block;
+  height: auto;
+  min-height: 14rem;
+  width: 100%;
+}
+
+.chart-axis {
+  stroke: #52606d;
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  fill: #364152;
+  font-size: 12px;
+  text-anchor: middle;
+}
+
+.turnover-line {
+  stroke: #174ea6;
+  stroke-width: 3;
+}
+
+.turnover-point,
+.bar-added {
+  fill: #174ea6;
+}
+
+.bar-removed {
+  fill: #b54708;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.chart-legend span::before {
+  content: "";
+  display: inline-block;
+  height: 0.75rem;
+  margin-right: 0.35rem;
+  width: 0.75rem;
+}
+
+.legend-added::before {
+  background: #174ea6;
+}
+
+.legend-removed::before {
+  background: #b54708;
+}
+
+.turnover-table {
+  margin-top: 1rem;
+}
+
 @media (max-width: 44rem) {
   main {
     margin-top: 1rem;
@@ -200,6 +294,19 @@ details summary {
   }
 
   .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .turnover-heading-row {
+    display: block;
+  }
+
+  .range-controls {
+    justify-content: flex-start;
+    margin-bottom: 1rem;
+  }
+
+  .turnover-chart-grid {
     grid-template-columns: 1fr;
   }
 

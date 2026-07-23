@@ -243,6 +243,84 @@
           {% endif %}
         </section>
 
+        <section aria-labelledby="turnover-analytics-heading">
+          <div class="turnover-heading-row">
+            <div>
+              <h2 id="turnover-analytics-heading">Blacklist turnover over time</h2>
+              <p>Changes compare each snapshot with the previous snapshot using the same provider and request configuration. Missing data is not treated as zero.</p>
+            </div>
+            <nav class="range-controls" aria-label="Turnover chart range">
+              {% for days in (7, 30, 90) %}
+                <a href="/blacklist?range_days={{ days }}" {% if range_days == days %}aria-current="page"{% endif %}>{{ days }} days</a>
+              {% endfor %}
+            </nav>
+          </div>
+
+          {% if turnover_error %}
+            <p class="warning" role="status">{{ turnover_error }}</p>
+            <p>The snapshot table and other analytics remain available.</p>
+          {% elif turnover %}
+            <div class="turnover-chart-grid">
+              <figure class="chart-card" aria-labelledby="turnover-chart-heading">
+                <h3 id="turnover-chart-heading">Snapshot turnover</h3>
+                <figcaption>Percentage of each snapshot newly added since its comparison baseline. Gaps indicate missing data.</figcaption>
+                <div
+                  class="svg-chart"
+                  data-turnover-chart="line"
+                  data-points="{{ turnover_points | tojson | forceescape }}"
+                  role="img"
+                  aria-label="Line chart of snapshot turnover percentage by UTC time bucket"
+                ></div>
+              </figure>
+
+              <figure class="chart-card" aria-labelledby="address-change-chart-heading">
+                <h3 id="address-change-chart-heading">Added and removed IP addresses</h3>
+                <figcaption>Grouped counts for the same UTC buckets. Missing counts are omitted.</figcaption>
+                <div class="chart-legend" aria-hidden="true">
+                  <span class="legend-added">Added</span>
+                  <span class="legend-removed">Removed</span>
+                </div>
+                <div
+                  class="svg-chart"
+                  data-turnover-chart="bars"
+                  data-points="{{ turnover_points | tojson | forceescape }}"
+                  role="img"
+                  aria-label="Grouped bar chart of added and removed IP address counts by UTC time bucket"
+                ></div>
+              </figure>
+            </div>
+
+            <noscript><p>Charts require JavaScript; the complete turnover data remains available in the table below.</p></noscript>
+            <div class="table-wrap turnover-table">
+              <table>
+                <caption>Blacklist turnover data for the selected {{ range_days }}-day range</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">UTC period</th>
+                    <th scope="col">Turnover</th>
+                    <th scope="col">Added</th>
+                    <th scope="col">Removed</th>
+                    <th scope="col">Snapshot</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for point in turnover.points %}
+                    <tr>
+                      <th scope="row"><time datetime="{{ point.period_start }}">{{ point.period_start }}</time></th>
+                      <td>{% if point.turnover_percent is not none %}{{ point.turnover_percent }}%{% else %}Not available{% endif %}</td>
+                      <td>{{ point.added_count if point.added_count is not none else "Not available" }}</td>
+                      <td>{{ point.removed_count if point.removed_count is not none else "Not available" }}</td>
+                      <td>{{ point.snapshot_id if point.snapshot_id is not none else "Not available" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p>No turnover history is available for the selected range.</p>
+          {% endif %}
+        </section>
+
         <section aria-labelledby="entries-heading">
           <h2 id="entries-heading">Blacklist entries</h2>
           {% if blacklist.items %}
@@ -275,8 +353,8 @@
           {% endif %}
           <p>Showing {{ blacklist.items|length }} of {{ blacklist.total }} entries.</p>
           <nav aria-label="Blacklist pagination">
-            <span>{% if page > 1 %}<a href="/blacklist?page={{ page - 1 }}">Previous</a>{% endif %}</span>
-            <span>{% if blacklist.offset + blacklist.limit < blacklist.total %}<a href="/blacklist?page={{ page + 1 }}">Next</a>{% endif %}</span>
+            <span>{% if page > 1 %}<a href="/blacklist?page={{ page - 1 }}{% if range_days != 30 %}&amp;range_days={{ range_days }}{% endif %}">Previous</a>{% endif %}</span>
+            <span>{% if blacklist.offset + blacklist.limit < blacklist.total %}<a href="/blacklist?page={{ page + 1 }}{% if range_days != 30 %}&amp;range_days={{ range_days }}{% endif %}">Next</a>{% endif %}</span>
           </nav>
         </section>
       {% endif %}

@@ -18,8 +18,6 @@ from history_service.blacklist_policy import (
     SchedulingReason,
 )
 from history_service.blacklist_repository import BlacklistRepository
-from history_service.config import Settings, get_settings
-from history_service.database import get_engine, get_session_factory
 from history_service.exceptions import ApplicationError
 from history_service.models import (
     BlacklistSnapshot,
@@ -496,29 +494,9 @@ class BlacklistSyncService:
                 raise BlacklistSyncInfrastructureError from error
 
 
-def create_blacklist_sync_service(
-    settings: Settings | None = None,
-) -> BlacklistSyncService:
-    """Build a callable synchronization service without starting it."""
-    configured = settings or get_settings()
-    return BlacklistSyncService(
-        session_factory=get_session_factory(),
-        sync_lock=MariaDBBlacklistSyncLock(get_engine()),
-        confidence_minimum=configured.blacklist_confidence_minimum,
-        policy=BlacklistNextAttemptPolicy(
-            interval_seconds=configured.blacklist_sync_interval_seconds,
-            rate_limit_fallback_seconds=configured.blacklist_sync_interval_seconds,
-            maximum_temporary_attempts=(
-                configured.blacklist_maximum_temporary_attempts
-            ),
-            maximum_jitter_seconds=configured.blacklist_maximum_jitter_seconds,
-        ),
-    )
-
-
 def run_blacklist_sync(
     provider: BlacklistProviderGateway,
-    service: BlacklistSyncService | None = None,
+    service: BlacklistSyncService,
 ) -> BlacklistSyncResult:
-    """Run one synchronization without starting a loop or background task."""
-    return (service or create_blacklist_sync_service()).run_once(provider)
+    """Run a supplied one-shot synchronization service."""
+    return service.run_once(provider)

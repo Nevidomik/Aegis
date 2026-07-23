@@ -15,9 +15,9 @@ The application consists of three independently runnable services:
 
 - `ui-service` exposes the browser-facing interface;
 - `history-service` exposes the public application API, owns MariaDB, performs
-  application orchestration, and runs scheduled blacklist synchronization;
-- `provider-service` exposes internal provider endpoints and acts as the
-  stateless AbuseIPDB adapter.
+  application orchestration, and ingests normalized blacklist snapshots;
+- `provider-service` exposes internal provider endpoints, adapts AbuseIPDB, and
+  owns scheduled blacklist polling and durable delivery.
 
 The allowed request paths are:
 
@@ -32,17 +32,17 @@ Browser
 and:
 
 ```text
-History Service scheduler
-  -> Provider Service
+Provider Service worker
   -> AbuseIPDB Blacklist API
+  -> Provider local outbox
   -> History Service
   -> MariaDB
 ```
 
 UI Service must not call Provider Service directly.
 
-Provider Service must not access MariaDB, persist results, run the scheduler, or
-call History Service.
+Provider Service must not access MariaDB or UI. Its only History write is the
+authenticated normalized blacklist snapshot-ingestion endpoint.
 
 Browser polling and blacklist-read endpoints must use locally persisted data
 only. They must not trigger an AbuseIPDB request.
@@ -251,6 +251,7 @@ HTTP/1.1 200 OK
 
 ```json
 {
+  "polling_owner": "provider",
   "state": "ready",
   "sync_in_progress": false,
   "latest_snapshot_id": 42,
@@ -372,6 +373,44 @@ from newest to oldest. `added` means present only in the current retained
 snapshot, `removed` means present only in the previous retained snapshot, and
 `retained` means present in both. With only one snapshot, `snapshot_churn` is
 empty.
+
+### Get blacklist turnover time series
+
+```http
+GET /api/v1/blacklist/analytics/turnover?from=2026-07-22T00:00:00Z&to=2026-07-23T00:00:00Z&interval=hour
+```
+
+The range is UTC and half-open: `[from, to)`. `interval` is `hour`, `day`, or
+`week`; weekly buckets begin Monday at 00:00 UTC. At most 366 buckets may be
+requested. Each bucket uses the latest snapshot by provider generation time
+and snapshot ID. Empty buckets and snapshots without a comparison baseline
+return null metrics rather than zero.
+
+```json
+{
+  "from": "2026-07-22T00:00:00Z",
+  "to": "2026-07-22T02:00:00Z",
+  "interval": "hour",
+  "points": [
+    {
+      "period_start": "2026-07-22T00:00:00Z",
+      "turnover_percent": 12.5,
+      "added_count": 125,
+      "removed_count": 80,
+      "snapshot_id": 42
+    },
+    {
+      "period_start": "2026-07-22T01:00:00Z",
+      "turnover_percent": null,
+      "added_count": null,
+      "removed_count": null,
+      "snapshot_id": null
+    }
+  ]
+}
+
+This endpoint reads persisted snapshot summary columns only and never loads
+blacklist entry sets.
 
 Success with no accepted snapshot:
 
@@ -770,13 +809,10 @@ Application API error contract.
 
 # Blacklist synchronization behavior
 
-Blacklist synchronization is an internal History Service process and is not
-triggered by blacklist-read endpoints.
-
-The initial in-process scheduler runs inside History Service through FastAPI
-lifespan and can be disabled with `BLACKLIST_SCHEDULER_ENABLED`. It is disabled
-by default. A deployment must enable it in only one History Service Uvicorn
-worker; other request-serving workers must disable it.
+Blacklist synchronization is owned by the standalone Provider worker and is
+not triggered by API or blacklist-read endpoints. The worker is independent of
+Provider API worker count, uses a singleton lock and durable SQLite outbox, and
+is enabled in deployment with `BLACKLIST_POLLING_ENABLED=true`.
 
 Default policy:
 
@@ -787,15 +823,14 @@ Default policy:
 
 A synchronization attempt must:
 
-1. register a synchronization run;
-2. call `GET /internal/v1/blacklist`;
-3. validate the complete Provider Service response;
-4. detect duplicate provider snapshots;
-5. persist the snapshot and every entry transactionally;
-6. persist normalized rate-limit metadata;
-7. mark the synchronization run as successful, duplicate, rate-limited, or
-   failed;
-8. calculate and persist the next allowed attempt time.
+1. have the Provider worker call and validate AbuseIPDB;
+2. commit the normalized snapshot under a stable `delivery_id` to SQLite;
+3. deliver the pending payload to History independently of the next poll;
+4. have History authenticate and validate the complete payload;
+5. idempotently persist the snapshot, entries, rate-limit metadata, and change
+   summaries in one MariaDB transaction;
+6. acknowledge duplicate or newly accepted delivery so Provider can remove it
+   from the outbox.
 
 A failed synchronization must not remove or replace the latest successful
 snapshot.
@@ -836,7 +871,7 @@ next_attempt_at = max(
 ) + jitter
 ```
 
-When neither constraint is valid or present, History Service uses the
+When neither constraint is valid or present, Provider uses the
 conservative fallback interval. Past reset timestamps are clamped to the
 synchronization completion time. A successful response with remaining quota
 greater than zero follows the configured normal interval even if informational
@@ -844,7 +879,7 @@ rate-limit timestamps are present.
 
 A known rate-limit reset time must not be bypassed by exponential backoff.
 
-For temporary connection failures, timeouts, and upstream 5xx failures, History
+For temporary connection failures, timeouts, and upstream 5xx failures, Provider
 Service uses this bounded progression:
 
 ```text
@@ -888,6 +923,14 @@ Expected behavior:
 - Provider Service verifies local initialization and required configuration;
 - no readiness endpoint may consume AbuseIPDB quota;
 - History readiness must not require a successful live blacklist request.
+
+Provider health responses include `blacklist_polling_owner: "provider"`;
+readiness also includes the configured `blacklist_polling_enabled` value. These
+describe ownership and configuration of the API deployment. Because polling
+runs in an independent process, operators must also check
+`aegis-provider-blacklist-worker.service` (or the equivalent supervisor). API
+readiness does not assert worker liveness, outbox delivery, or AbuseIPDB
+reachability.
 
 The presence of stale blacklist data does not necessarily make History Service
 unready. Staleness is reported through `/api/v1/blacklist/status`.

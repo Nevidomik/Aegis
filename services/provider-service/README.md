@@ -2,8 +2,9 @@
 
 The Provider is an internal AbuseIPDB proxy. It accepts normalized lookup
 requests from History Service, validates and normalizes AbuseIPDB responses,
-and returns a provider-independent internal result. It has no persistence or
-history responsibilities.
+and returns a provider-independent internal result. A separate Provider worker
+owns periodic blacklist polling and keeps pending History deliveries in a
+small local SQLite outbox. Provider never accesses MariaDB or UI.
 
 ## Configuration
 
@@ -23,6 +24,10 @@ ABUSEIPDB_READ_TIMEOUT_SECONDS=10
 ABUSEIPDB_WRITE_TIMEOUT_SECONDS=5
 ABUSEIPDB_POOL_TIMEOUT_SECONDS=5
 ABUSEIPDB_OPERATION_TIMEOUT_SECONDS=20
+BLACKLIST_POLLING_ENABLED=false
+BLACKLIST_OUTBOX_PATH=var/provider-blacklist-outbox.sqlite3
+HISTORY_SERVICE_URL=http://127.0.0.1:8002
+HISTORY_INGESTION_TOKEN=replace-with-shared-secret
 ```
 
 `ABUSEIPDB_API_KEY` is required and is read from the service-local environment
@@ -43,6 +48,20 @@ uv sync --locked --all-packages --all-extras
 Provider maintains one lifecycle-owned HTTPX client for AbuseIPDB. It is reused
 across requests and closed during shutdown.
 
+Run exactly one standalone polling worker when periodic synchronization is
+enabled:
+
+```bash
+.venv/bin/aegis-provider-blacklist-worker
+```
+
+The API and worker are independent processes. The worker calls AbuseIPDB,
+commits every successful fetch to its SQLite outbox, and then calls only
+History's authenticated ingestion endpoint. Polling and delivery retries have
+separate clocks, so a History outage does not discard a fetched snapshot.
+Production must place `BLACKLIST_OUTBOX_PATH` on durable storage writable only
+by the Provider service account.
+
 `POST /internal/v1/reputation-checks` is the internal provider-proxy boundary
 for History Service. It accepts only a canonical public `ip_address` and a
 `max_age_days` value from 1 through 365, calls the configured AbuseIPDB
@@ -55,7 +74,18 @@ It accepts `confidence_minimum` from 0 through 100 (default 90) and `limit` from
 1 through 1000 (default 1000). Duplicate normalized IP addresses invalidate the
 snapshot with `UPSTREAM_INVALID_RESPONSE`; results are never persisted.
 Provider Service extracts supported rate-limit and `Retry-After` metadata for
-History Service, but it does not decide when the next request runs.
+API consumers. The standalone worker uses the same parsing and normalization
+abstractions when deciding its next poll.
+
+`GET /health/live` and `GET /health/ready` are quota-free API-process checks.
+Their payload identifies Provider as the polling owner and readiness reports
+whether polling is configured, but neither endpoint proves the separate worker
+is running. In a systemd deployment, check it independently:
+
+```bash
+systemctl is-active aegis-provider-blacklist-worker.service
+journalctl -u aegis-provider-blacklist-worker.service -n 100 --no-pager
+```
 
 Tests replace the reputation provider or use HTTPX mock transports. The default
 suite makes no live AbuseIPDB calls:

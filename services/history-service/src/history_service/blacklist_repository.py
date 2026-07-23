@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import overload
+from decimal import Decimal
+from typing import cast, overload
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -57,6 +58,15 @@ class SnapshotChurnCount:
     retained: int
 
 
+@dataclass(frozen=True)
+class TurnoverSnapshotSummary:
+    snapshot_id: int
+    provider_generated_at: datetime
+    turnover_percent: Decimal | None
+    added_count: int | None
+    removed_count: int | None
+
+
 class BlacklistRepository:
     """Query and mutate blacklist records through a supplied session."""
 
@@ -70,6 +80,7 @@ class BlacklistRepository:
             snapshot.provider_generated_at
         )
         snapshot.fetched_at = self._as_mariadb_utc(snapshot.fetched_at)
+        snapshot.received_at = self._as_mariadb_utc(snapshot.received_at)
         snapshot.rate_limit_reset_at = self._as_mariadb_utc(
             snapshot.rate_limit_reset_at
         )
@@ -79,6 +90,14 @@ class BlacklistRepository:
         session.add(snapshot)
         session.flush()
         return snapshot
+
+    def get_by_delivery_id(
+        self, session: Session, delivery_id: str
+    ) -> BlacklistSnapshot | None:
+        statement = select(BlacklistSnapshot).where(
+            BlacklistSnapshot.delivery_id == delivery_id
+        )
+        return session.scalar(statement)
 
     def get_by_provider_generation(
         self,
@@ -93,6 +112,31 @@ class BlacklistRepository:
             == self._as_mariadb_utc(provider_generated_at),
         )
         return session.scalar(statement)
+
+    def get_previous_snapshot_ip_addresses(
+        self,
+        session: Session,
+        *,
+        provider: str,
+        confidence_minimum: int,
+        requested_limit: int,
+    ) -> set[str] | None:
+        previous_id = session.scalar(
+            select(BlacklistSnapshot.snapshot_id)
+            .where(
+                BlacklistSnapshot.provider == provider,
+                BlacklistSnapshot.confidence_minimum == confidence_minimum,
+                BlacklistSnapshot.requested_limit == requested_limit,
+            )
+            .order_by(BlacklistSnapshot.snapshot_id.desc())
+            .limit(1)
+        )
+        if previous_id is None:
+            return None
+        statement = select(BlacklistSnapshotEntry.ip_address).where(
+            BlacklistSnapshotEntry.snapshot_id == previous_id
+        )
+        return set(session.scalars(statement))
 
     def get_snapshot(
         self, session: Session, snapshot_id: int
@@ -121,6 +165,51 @@ class BlacklistRepository:
     def count_snapshots(self, session: Session) -> int:
         statement = select(func.count()).select_from(BlacklistSnapshot)
         return session.scalar(statement) or 0
+
+    def turnover_snapshots_between(
+        self,
+        session: Session,
+        *,
+        provider: str,
+        from_: datetime,
+        to: datetime,
+    ) -> list[TurnoverSnapshotSummary]:
+        statement = (
+            select(
+                BlacklistSnapshot.snapshot_id,
+                BlacklistSnapshot.provider_generated_at,
+                BlacklistSnapshot.turnover_percent,
+                BlacklistSnapshot.added_count,
+                BlacklistSnapshot.removed_count,
+            )
+            .where(
+                BlacklistSnapshot.provider == provider,
+                BlacklistSnapshot.provider_generated_at >= self._as_mariadb_utc(from_),
+                BlacklistSnapshot.provider_generated_at < self._as_mariadb_utc(to),
+            )
+            .order_by(
+                BlacklistSnapshot.provider_generated_at.asc(),
+                BlacklistSnapshot.snapshot_id.asc(),
+            )
+        )
+        return [
+            TurnoverSnapshotSummary(
+                snapshot_id=int(snapshot_id),
+                provider_generated_at=cast(
+                    datetime, self._as_aware_utc(provider_generated_at)
+                ),
+                turnover_percent=turnover_percent,
+                added_count=added_count,
+                removed_count=removed_count,
+            )
+            for (
+                snapshot_id,
+                provider_generated_at,
+                turnover_percent,
+                added_count,
+                removed_count,
+            ) in session.execute(statement)
+        ]
 
     def list_entries(
         self,

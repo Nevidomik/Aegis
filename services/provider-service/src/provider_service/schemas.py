@@ -3,6 +3,7 @@
 from datetime import datetime
 from ipaddress import ip_address
 from typing import Literal, Self
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -213,6 +214,33 @@ class InternalBlacklistResponse(BlacklistProviderResult):
     @field_validator("fetched_at")
     @classmethod
     def validate_fetched_at(cls, value: datetime) -> datetime:
+        validated = require_aware(value)
+        assert validated is not None
+        return validated
+
+
+class BlacklistSnapshotDelivery(BaseModel):
+    """Normalized snapshot delivered durably to History."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: UUID
+    snapshot: InternalBlacklistResponse
+
+
+class BlacklistSnapshotDeliveryReceipt(BaseModel):
+    """Validated acknowledgement returned by History."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: UUID
+    snapshot_id: StrictInt = Field(gt=0)
+    status: Literal["accepted", "duplicate"]
+    received_at: datetime
+
+    @field_validator("received_at")
+    @classmethod
+    def validate_received_at(cls, value: datetime) -> datetime:
         validated = require_aware(value)
         assert validated is not None
         return validated

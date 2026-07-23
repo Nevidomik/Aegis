@@ -22,9 +22,9 @@ UI Service ──HTTP──> History Service ──HTTP──> Provider Service
 
 Scheduled blacklist flow:
 
-History Service scheduler
-  -> Provider Service
+Provider Service worker
   -> AbuseIPDB Blacklist API
+  -> durable SQLite outbox
   -> History Service
   -> MariaDB
 
@@ -32,9 +32,9 @@ Service responsibilities:
 
 - **UI Service** — renders the interface and communicates only with History Service.
 
-- **History Service** — acts as the application backend, exclusively owns MariaDB, runs blacklist synchronization, and stores complete blacklist snapshots.
+- **History Service** — acts as the application backend, exclusively owns MariaDB, and stores complete blacklist snapshots.
 
-- **Provider Service** — acts as an internal AbuseIPDB adapter. It validates and normalizes provider responses but does not persist data or run scheduled jobs.
+- **Provider Service** — adapts AbuseIPDB and owns periodic blacklist polling and durable delivery to History.
 
 More details: [`docs/architecture.md`](docs/architecture.md)
 
@@ -81,6 +81,7 @@ Replace the placeholders for required secrets. They must never be committed:
 
 - `ABUSEIPDB_API_KEY`
 - `MARIADB_PASSWORD`
+- `HISTORY_INGESTION_TOKEN` (the same value in Provider and History)
 
 ## Local development
 
@@ -106,12 +107,8 @@ Run a service from the repository root, for example:
   --port 8000
 ```
 
-When the in-process History blacklist scheduler is enabled, run exactly one
-scheduler-enabled History worker. Do not use multiple Uvicorn workers with
-`BLACKLIST_SCHEDULER_ENABLED=true`; additional request-serving processes must
-disable the scheduler.
-
-The scheduler's default interval is 21600 seconds (six hours). Rate-limit
+The standalone Provider blacklist worker is the sole periodic polling owner,
+independent of API worker count. Its default interval is 21600 seconds. Rate-limit
 metadata may move the next attempt later, while temporary failures use bounded
 5, 15, 30, and 60 minute retries. A known provider reset time is never bypassed.
 
@@ -126,17 +123,17 @@ migration commands in the History Service README run from the repository root.
 
 ## Vagrant topology
 
-The base Vagrant environment creates four Ubuntu virtual machines on a private
-network. The application VMs receive isolated Python environments, Provider
+The base Vagrant environment creates four Ubuntu virtual machines with static
+addresses on the configured bridged network. The application VMs receive isolated Python environments, Provider
 Service is deployed on `provider-vm`, and the database VM receives MariaDB
 only. History and UI are not started yet.
 
 | Virtual machine | Address | Intended role |
 | --- | --- | --- |
-| `ui-vm` | `192.168.56.10` | User-facing UI Service |
-| `history-vm` | `192.168.56.11` | Internal History Service |
-| `provider-vm` | `192.168.56.12` | Internal Provider Service |
-| `db-vm` | `192.168.56.13` | Internal MariaDB host |
+| `ui-vm` | `192.168.100.10` | User-facing UI Service |
+| `history-vm` | `192.168.100.11` | Internal History Service |
+| `provider-vm` | `192.168.100.12` | Internal Provider Service |
+| `db-vm` | `192.168.100.13` | Internal MariaDB host |
 
 Manage the environment from the repository root:
 
@@ -152,8 +149,8 @@ vagrant destroy -f
 ```
 
 The `vagrant ssh <vm>` form accepts any virtual-machine name shown in the
-table. No public forwarded ports are configured; the host-only private network
-makes the future UI endpoint reachable at `192.168.56.10`.
+table. No Vagrant forwarded ports are configured; the host and other machines
+on the bridged `192.168.100.0/24` network can reach allowed guest ports.
 
 Before the first `vagrant up`, create the host-local password file used to
 provision MariaDB and configure History Service. Keep it outside the shared
@@ -172,9 +169,9 @@ underscores, or the documented safe punctuation characters
 location, export `AEGIS_DATABASE_SECRET_FILE` with an absolute path before
 running Vagrant.
 
-MariaDB is bound to `192.168.56.13:3306` without a public forwarded port. The
+MariaDB is bound to `192.168.100.13:3306` without a public forwarded port. The
 `aegis_history` account accepts connections only from History VM address
-`192.168.56.11`.
+`192.168.100.11`.
 
 Re-run database provisioning and check MariaDB health with:
 
@@ -193,6 +190,8 @@ before provisioning `provider-vm`:
 umask 077
 mkdir -p ~/.config/aegis
 printf '%s\n' 'your-real-abuseipdb-api-key' > ~/.config/aegis/abuseipdb-api-key
+printf '%s\n' 'replace-with-at-least-32-random-characters' \
+  > ~/.config/aegis/provider-history-ingestion-token
 ```
 
 The key file must contain one non-empty line using letters, numbers, dots,
@@ -201,15 +200,18 @@ installs it as `/etc/aegis/provider.env` with restrictive permissions and
 removes the temporary upload. The key is not placed in the shared `/vagrant`
 directory, Vagrantfile, or a shell argument.
 
-To keep the key elsewhere, export its path before running Vagrant:
+The ingestion token is uploaded only to Provider and History and authenticates
+the internal snapshot-delivery endpoint. To keep either secret elsewhere,
+export its path before running Vagrant:
 
 ```bash
 export AEGIS_PROVIDER_SECRET_FILE=/absolute/path/to/abuseipdb-api-key
+export AEGIS_INGESTION_SECRET_FILE=/absolute/path/to/provider-history-token
 vagrant up provider-vm
 ```
 
 Provider Service runs as `aegis` through `aegis-provider.service` and listens
-on the private address `192.168.56.12:8001`. Inspect its state and logs with:
+on `192.168.100.12:8001`. Inspect its state and logs with:
 
 ```bash
 vagrant ssh provider-vm -c "sudo systemctl status aegis-provider.service"
@@ -218,15 +220,26 @@ vagrant ssh provider-vm -c "sudo journalctl -u aegis-provider.service -f"
 ```
 
 Reprovisioning `provider-vm` reinstalls only Provider dependencies, refreshes
-its environment and unit files, restarts the unit, and verifies both Provider
-health endpoints.
+its environment and unit files, restarts the API and independent polling
+worker, and verifies both Provider API health endpoints. The worker stores
+pending deliveries under `/var/lib/aegis-provider`, owned by `aegis:aegis`
+with mode `0750`. API health does not prove worker health; check it separately:
+
+```bash
+vagrant ssh provider-vm -c \
+  "sudo systemctl status aegis-provider-blacklist-worker.service"
+vagrant ssh provider-vm -c \
+  "sudo journalctl -u aegis-provider-blacklist-worker.service -n 100 --no-pager"
+vagrant ssh provider-vm -c \
+  "sudo stat -c '%U:%G:%a %n' /var/lib/aegis-provider"
+```
 
 History Service runs as `aegis` through `aegis-history.service` and listens on
-the private address `192.168.56.11:8002`. Provisioning writes the protected
+`192.168.100.11:8002`. Provisioning writes the protected
 `/etc/aegis/history.env`, waits for MariaDB and Provider readiness, applies
 History-owned Alembic migrations from `/opt/aegis/history-service`, and then
-starts one Uvicorn process. `BLACKLIST_SCHEDULER_ENABLED=true`, so no additional
-History workers should be added.
+starts the History API. Provider polling runs separately through
+`aegis-provider-blacklist-worker.service`.
 
 Provider readiness verification calls only `/health/ready`; it does not make an
 AbuseIPDB request or consume API quota. History readiness executes a minimal
@@ -236,15 +249,15 @@ MariaDB query. Inspect the deployed service with:
 vagrant ssh history-vm -c "sudo systemctl status aegis-history.service"
 vagrant ssh history-vm -c "sudo journalctl -u aegis-history.service -n 100 --no-pager"
 vagrant ssh history-vm -c "sudo journalctl -u aegis-history.service -f"
-vagrant ssh history-vm -c "curl --fail http://192.168.56.11:8002/health/live"
-vagrant ssh history-vm -c "curl --fail http://192.168.56.11:8002/health/ready"
+vagrant ssh history-vm -c "curl --fail http://192.168.100.11:8002/health/live"
+vagrant ssh history-vm -c "curl --fail http://192.168.100.11:8002/health/ready"
 ```
 
-History is available only on the private Vagrant network; no host public port
-is forwarded.
+History is filtered by the guest firewall to UI, Provider ingestion, and local
+health-check sources; no Vagrant host port is forwarded.
 
 UI Service runs as `aegis` through `aegis-ui.service`, listens on
-`0.0.0.0:8000`, and calls History at `http://192.168.56.11:8002`. Its protected
+`0.0.0.0:8000`, and calls History at `http://192.168.100.11:8002`. Its protected
 `/etc/aegis/ui.env` contains only `HISTORY_SERVICE_URL` and
 phase-specific `HISTORY_*_TIMEOUT_SECONDS`; it contains no Provider URL,
 AbuseIPDB key, or
@@ -253,11 +266,11 @@ URLs out of browser-side JavaScript.
 
 Provisioning verifies UI liveness and its History-backed readiness from the
 guest. A Vagrant host trigger also verifies that the host can reach
-`http://192.168.56.10:8000`. Inspect the UI with:
+`http://192.168.100.10:8000`. Inspect the UI with:
 
 ```bash
-curl --fail http://192.168.56.10:8000/health/live
-curl --fail http://192.168.56.10:8000/health/ready
+curl --fail http://192.168.100.10:8000/health/live
+curl --fail http://192.168.100.10:8000/health/ready
 vagrant ssh ui-vm -c "sudo systemctl status aegis-ui.service"
 vagrant ssh ui-vm -c "sudo journalctl -u aegis-ui.service -n 100 --no-pager"
 vagrant ssh ui-vm -c "sudo journalctl -u aegis-ui.service -f"
@@ -269,22 +282,25 @@ No reverse proxy is required by the current project and none is installed.
 
 All four guests use Ubuntu's UFW firewall with inbound traffic denied and
 outbound traffic allowed by default. TCP 22 remains open for Vagrant SSH. The
-private-network application rules are:
+rules assume `192.168.100.0/24` is a trusted bridged development network and
+that the configured host adapter (`Ethernet 4` in `Vagrantfile`) exists. They
+are not an Internet-edge firewall policy: SSH is not source-restricted and UI
+port 8000 is reachable from the whole subnet. The application rules are:
 
 | Destination | Allowed source | TCP port |
 | --- | --- | ---: |
-| `ui-vm` | Vagrant private network `192.168.56.0/24` | 8000 |
-| `history-vm` | `ui-vm` (`192.168.56.10`) | 8002 |
-| `provider-vm` | `history-vm` (`192.168.56.11`) | 8001 |
-| `db-vm` | `history-vm` (`192.168.56.11`) | 3306 |
+| `ui-vm` | bridged network `192.168.100.0/24` | 8000 |
+| `history-vm` | `ui-vm` (`192.168.100.10`) and `provider-vm` (`192.168.100.12`) | 8002 |
+| `provider-vm` | `history-vm` (`192.168.100.11`) | 8001 |
+| `db-vm` | `history-vm` (`192.168.100.11`) | 3306 |
 
-History and Provider also allow their own private addresses to reach their
+History and Provider also allow their own assigned addresses to reach their
 respective service ports for local provisioning health checks.
 
 Normal outbound access remains available for package installation. Provider
-can make outbound HTTPS requests to AbuseIPDB. Explicit outbound deny rules
-block UI from Provider TCP 8001 and MariaDB TCP 3306, and block Provider from
-MariaDB TCP 3306.
+can make outbound HTTPS requests to AbuseIPDB and TCP 8002 requests to History.
+Explicit outbound deny rules block UI from Provider TCP 8001 and MariaDB TCP
+3306, and block Provider from UI TCP 8000 and MariaDB TCP 3306.
 
 Inspect the effective rules on each guest:
 
@@ -298,18 +314,18 @@ vagrant ssh db-vm -c "sudo ufw status verbose"
 Verify allowed paths from their actual source guests:
 
 ```bash
-curl --fail http://192.168.56.10:8000/health/live
-vagrant ssh ui-vm -c "curl --fail http://192.168.56.11:8002/health/live"
-vagrant ssh history-vm -c "curl --fail http://192.168.56.12:8001/health/live"
-vagrant ssh history-vm -c "timeout 3 bash -c '</dev/tcp/192.168.56.13/3306'"
+curl --fail http://192.168.100.10:8000/health/live
+vagrant ssh ui-vm -c "curl --fail http://192.168.100.11:8002/health/live"
+vagrant ssh history-vm -c "curl --fail http://192.168.100.12:8001/health/live"
+vagrant ssh history-vm -c "timeout 3 bash -c '</dev/tcp/192.168.100.13/3306'"
 ```
 
 Verify prohibited paths fail:
 
 ```bash
-vagrant ssh ui-vm -c "! curl --connect-timeout 3 http://192.168.56.12:8001/health/live"
-vagrant ssh ui-vm -c "! timeout 3 bash -c '</dev/tcp/192.168.56.13/3306'"
-vagrant ssh provider-vm -c "! timeout 3 bash -c '</dev/tcp/192.168.56.13/3306'"
+vagrant ssh ui-vm -c "! curl --connect-timeout 3 --max-time 5 http://192.168.100.12:8001/health/live"
+vagrant ssh ui-vm -c "! timeout 3 bash -c '</dev/tcp/192.168.100.13/3306'"
+vagrant ssh provider-vm -c "! timeout 3 bash -c '</dev/tcp/192.168.100.13/3306'"
 ```
 
 ### End-to-end deployment verification
@@ -320,7 +336,7 @@ Run the default quota-free deployment verification from the repository root:
 scripts/verify-vagrant.sh
 ```
 
-It checks VM state and private addresses, health endpoints, UI pages, blacklist
+It checks VM state and assigned addresses, health endpoints, UI pages, blacklist
 status, MariaDB and application units, History database readiness,
 UI-to-History communication, and application process ownership. It prints a
 PASS/FAIL summary and exits non-zero if any check fails. The default mode never
@@ -359,11 +375,11 @@ sudo ss -lntp
 Check service health and MariaDB connectivity from the expected source VM:
 
 ```bash
-curl --fail http://192.168.56.10:8000/health/live
-curl --fail http://192.168.56.11:8002/health/ready
-curl --fail http://192.168.56.12:8001/health/ready
+curl --fail http://192.168.100.10:8000/health/live
+curl --fail http://192.168.100.11:8002/health/ready
+curl --fail http://192.168.100.12:8001/health/ready
 sudo mysqladmin --protocol=socket ping
-timeout 3 bash -c '</dev/tcp/192.168.56.13/3306'
+timeout 3 bash -c '</dev/tcp/192.168.100.13/3306'
 ```
 
 The three application VMs are provisioned independently. Each receives only
@@ -387,6 +403,38 @@ vagrant ssh history-vm -c "/opt/aegis/history-service/.venv/bin/python -c 'impor
 vagrant ssh provider-vm -c "/opt/aegis/provider-service/.venv/bin/python -c 'import provider_service'"
 ```
 
+### Deployment and rollback
+
+Provision in dependency order after creating all three host-local secret
+files:
+
+```bash
+vagrant up db-vm provider-vm history-vm ui-vm
+scripts/verify-vagrant.sh
+```
+
+For an application-only update, provision Provider, then History, then UI.
+Provider's API unit has no ordering dependency on its polling worker. The
+worker starts after network availability and recovers pending SQLite outbox
+rows after restart.
+
+For a safe operational rollback, stop the new polling owner first:
+
+```bash
+vagrant ssh provider-vm -c \
+  "sudo systemctl disable --now aegis-provider-blacklist-worker.service"
+```
+
+Keep `/var/lib/aegis-provider/blacklist-outbox.sqlite3` backed up and intact;
+it may contain fetched snapshots not yet acknowledged by History. Roll back
+Provider and History code/config together when their ingestion contract
+changes. If returning to a release where History owns scheduling, enable that
+scheduler only after the Provider worker is confirmed stopped, otherwise both
+owners can consume AbuseIPDB quota. The ingestion and turnover Alembic changes
+are additive and should normally remain during an application rollback.
+Downgrade them only after a database backup and only if loss of delivery
+idempotency and stored metrics is acceptable.
+
 ## Current scope
 
 The application supports:
@@ -399,14 +447,14 @@ The application supports:
 - full historical retention of accepted snapshots for the initial implementation;
 - tabular display of the latest successful snapshot;
 - automatic UI refresh when a new local snapshot is available;
+- server-rendered blacklist analytics and turnover charts;
 - rate-limit-aware retry behavior;
 - explicit separation between UI, application, and provider responsibilities.
 
 Not included yet:
 
 - authentication;
-- charts and analytical dashboards;
-- cron or a dedicated scheduler process;
+- cron;
 - message queues;
 - caching;
 - multiple reputation providers;

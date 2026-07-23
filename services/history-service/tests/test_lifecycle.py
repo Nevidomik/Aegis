@@ -1,5 +1,3 @@
-import asyncio
-
 import httpx
 import pytest
 from history_service.config import Settings
@@ -21,7 +19,6 @@ def settings() -> Settings:
         provider_read_timeout_seconds=2,
         provider_write_timeout_seconds=3,
         provider_pool_timeout_seconds=4,
-        blacklist_scheduler_enabled=False,
     )
 
 
@@ -58,34 +55,8 @@ async def test_lifespan_reuses_and_closes_provider_client(
 
 
 @pytest.mark.anyio
-async def test_scheduler_disabled_does_not_create_task() -> None:
+async def test_history_lifespan_never_creates_blacklist_scheduler() -> None:
     application = create_app(settings=settings())
 
     async with application.router.lifespan_context(application):
         assert not hasattr(application.state, "blacklist_scheduler_task")
-
-
-@pytest.mark.anyio
-async def test_scheduler_starts_once_and_stops_cleanly_without_provider_call() -> None:
-    configured = settings().model_copy(update={"blacklist_scheduler_enabled": True})
-    started = asyncio.Event()
-    stopped = asyncio.Event()
-
-    class FakeScheduler:
-        async def run(self, stop_event: asyncio.Event) -> None:
-            started.set()
-            await stop_event.wait()
-            stopped.set()
-
-    application = create_app(
-        settings=configured,
-        scheduler_factory=lambda _settings, _provider: FakeScheduler(),
-    )
-
-    async with application.router.lifespan_context(application):
-        await started.wait()
-        task = application.state.blacklist_scheduler_task
-        assert task.done() is False
-
-    assert stopped.is_set()
-    assert task.done()

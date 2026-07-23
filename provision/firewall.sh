@@ -33,7 +33,7 @@ ufw default allow outgoing
 case "${ROLE}" in
   ui)
     ufw allow from "${PRIVATE_NETWORK}" to any port 8000 proto tcp \
-      comment "Aegis UI from host-only network"
+      comment "Aegis UI from deployment network"
     ufw allow from "${PRIVATE_NETWORK}" to any port 8002 proto tcp \
       comment "Aegis History from network"
     ufw deny out to "${PROVIDER_ADDRESS}" port 8001 proto tcp \
@@ -46,6 +46,8 @@ case "${ROLE}" in
       comment "Aegis History from UI"
     ufw allow from "${HISTORY_ADDRESS}" to any port 8002 proto tcp \
       comment "History local health checks"
+    ufw allow from "${PROVIDER_ADDRESS}" to any port 8002 proto tcp \
+      comment "History snapshot ingestion from Provider"
     ;;
   provider)
     ufw allow from "${HISTORY_ADDRESS}" to any port 8001 proto tcp \
@@ -54,6 +56,8 @@ case "${ROLE}" in
       comment "Provider local health checks"
     ufw deny out to "${DATABASE_ADDRESS}" port 3306 proto tcp \
       comment "Block Provider database access"
+    ufw deny out to "${UI_ADDRESS}" port 8000 proto tcp \
+      comment "Block Provider UI access"
     ;;
   db)
     ufw allow from "${HISTORY_ADDRESS}" to any port 3306 proto tcp \

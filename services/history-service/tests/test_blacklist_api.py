@@ -19,6 +19,7 @@ from history_service.schemas import (
     BlacklistSnapshotList,
     BlacklistSnapshotSummary,
     BlacklistStatusResponse,
+    BlacklistTurnoverResponse,
 )
 from httpx2 import AsyncClient
 
@@ -198,6 +199,66 @@ async def test_blacklist_analytics_pair_limit_is_bounded(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "from=2026-07-22T00:00:00Z&to=2026-07-23T00:00:00Z&interval=month",
+        "from=2026-07-22T00:00:00Z&to=2027-07-24T00:00:00Z&interval=day",
+        "from=2026-07-23T00:00:00Z&to=2026-07-22T00:00:00Z&interval=day",
+        "from=2026-07-22T00:00:00&to=2026-07-23T00:00:00Z&interval=day",
+    ],
+)
+async def test_blacklist_turnover_query_validation(
+    client: AsyncClient, query: str
+) -> None:
+    response = await client.get(f"/api/v1/blacklist/analytics/turnover?{query}")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.anyio
+async def test_blacklist_turnover_endpoint_uses_explicit_nulls(
+    client: AsyncClient, override_dependency: Any
+) -> None:
+    service = Mock()
+    service.turnover.return_value = BlacklistTurnoverResponse.model_validate(
+        {
+            "from": "2026-07-22T00:00:00Z",
+            "to": "2026-07-22T02:00:00Z",
+            "interval": "hour",
+            "points": [
+                {
+                    "period_start": "2026-07-22T00:00:00Z",
+                    "turnover_percent": None,
+                    "added_count": None,
+                    "removed_count": None,
+                    "snapshot_id": None,
+                }
+            ],
+        }
+    )
+    override_dependency(get_blacklist_read_service, service)
+
+    response = await client.get(
+        "/api/v1/blacklist/analytics/turnover"
+        "?from=2026-07-22T00:00:00Z"
+        "&to=2026-07-22T02:00:00Z"
+        "&interval=hour"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["points"][0] == {
+        "period_start": "2026-07-22T00:00:00Z",
+        "turnover_percent": None,
+        "added_count": None,
+        "removed_count": None,
+        "snapshot_id": None,
+    }
+    service.turnover.assert_called_once()
+
+
+@pytest.mark.anyio
 async def test_blacklist_analytics_contract_has_stable_ordered_fields(
     client: AsyncClient, override_dependency: Any
 ) -> None:
@@ -244,3 +305,4 @@ def test_status_error_model_contains_only_safe_summary() -> None:
         "code": "UPSTREAM_TIMEOUT",
         "message": "The latest synchronization attempt failed.",
     }
+    assert result.polling_owner == "provider"

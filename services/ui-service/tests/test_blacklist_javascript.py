@@ -14,6 +14,7 @@ const polling = require(process.argv[1]);
 assert.equal(polling.snapshotChanged(42, 42), false);
 assert.equal(polling.snapshotChanged(42, 43), true);
 assert.equal(polling.snapshotChanged(null, 1), true);
+assert.equal(typeof polling.renderTurnoverCharts, "function");
 
 async function exercise() {
   let reloads = 0;
@@ -100,3 +101,12 @@ exercise().catch((error) => {
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_turnover_renderer_preserves_gaps_and_separate_bar_series() -> None:
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "point.turnover_percent == null" in source
+    assert "appendSegment();" in source
+    assert '["added_count", "bar-added"' in source
+    assert '["removed_count", "bar-removed"' in source

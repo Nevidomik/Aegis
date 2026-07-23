@@ -1,6 +1,6 @@
 """Pydantic contracts for the internal History API."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from typing import Literal, Self
 from uuid import UUID
@@ -239,10 +239,32 @@ class ProviderBlacklistResponse(BaseModel):
     def validate_complete_snapshot(self) -> Self:
         if len(self.items) > self.request.limit:
             raise ValueError("Blacklist item count exceeds the requested limit.")
-        addresses = [item.ip_address for item in self.items]
-        if len(addresses) != len(set(addresses)):
-            raise ValueError("Blacklist entries must contain unique IP addresses.")
         return self
+
+
+class BlacklistSnapshotDelivery(BaseModel):
+    """Authenticated Provider delivery of one normalized snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: UUID
+    snapshot: ProviderBlacklistResponse
+
+
+class BlacklistSnapshotDeliveryResponse(BaseModel):
+    """Stable receipt returned for a new or repeated delivery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: UUID
+    snapshot_id: int
+    status: Literal["accepted", "duplicate"]
+    received_at: datetime
+
+    @field_validator("received_at")
+    @classmethod
+    def validate_received_at(cls, value: datetime) -> datetime:
+        return normalize_utc(value)
 
 
 class CheckCreate(ProviderReputationResponse):
@@ -471,6 +493,7 @@ class BlacklistLastError(BaseModel):
 class BlacklistStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    polling_owner: Literal["provider"] = "provider"
     state: Literal["empty", "ready", "syncing", "stale", "degraded"]
     sync_in_progress: StrictBool
     latest_snapshot_id: StrictInt | None = Field(default=None, gt=0)
@@ -492,6 +515,65 @@ class BlacklistAnalyticsQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pair_limit: int = Field(default=10, ge=1, le=30)
+
+
+class BlacklistTurnoverQuery(BaseModel):
+    """Bounded UTC range for persisted turnover summaries."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_: datetime = Field(alias="from")
+    to: datetime
+    interval: Literal["hour", "day", "week"]
+
+    @field_validator("from_", "to")
+    @classmethod
+    def validate_range_timestamp(cls, value: datetime) -> datetime:
+        return normalize_utc(value)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> Self:
+        if self.to <= self.from_:
+            raise ValueError("'to' must be later than 'from'.")
+        first = self._period_start(self.from_)
+        last = self._period_start(self.to - timedelta(microseconds=1))
+        seconds = {"hour": 3600, "day": 86400, "week": 604800}[self.interval]
+        point_count = int((last - first).total_seconds() // seconds) + 1
+        if point_count > 366:
+            raise ValueError("Turnover range exceeds the 366-point limit.")
+        return self
+
+    def _period_start(self, value: datetime) -> datetime:
+        day_start = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        if self.interval == "hour":
+            return value.replace(minute=0, second=0, microsecond=0)
+        if self.interval == "day":
+            return day_start
+        return day_start - timedelta(days=day_start.weekday())
+
+
+class BlacklistTurnoverPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    period_start: datetime
+    turnover_percent: float | None
+    added_count: StrictInt | None = Field(default=None, ge=0, le=1000)
+    removed_count: StrictInt | None = Field(default=None, ge=0, le=1000)
+    snapshot_id: StrictInt | None = Field(default=None, gt=0)
+
+    @field_validator("period_start")
+    @classmethod
+    def validate_period_start(cls, value: datetime) -> datetime:
+        return normalize_utc(value)
+
+
+class BlacklistTurnoverResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_: datetime = Field(alias="from")
+    to: datetime
+    interval: Literal["hour", "day", "week"]
+    points: list[BlacklistTurnoverPoint] = Field(max_length=366)
 
 
 class BlacklistAnalyticsSnapshot(BaseModel):

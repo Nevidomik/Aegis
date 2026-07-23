@@ -22,10 +22,9 @@ UI
 
 Blacklist synchronization flow:
 
-History Service scheduler
-  -> Provider Service
+Provider Service worker
   -> AbuseIPDB Blacklist API
-  -> Provider Service
+  -> Provider local durable outbox
   -> History Service
   -> MariaDB
 
@@ -58,9 +57,8 @@ Responsibilities:
 - public-IP validation and normalization;
 - request idempotency;
 - MariaDB persistence and Alembic migrations;
-- scheduled blacklist synchronization;
+- authenticated blacklist snapshot ingestion;
 - complete blacklist snapshot persistence;
-- synchronization state and retry decisions;
 - blacklist query APIs used by UI.
 
 History Service is the only service allowed to access MariaDB.
@@ -85,9 +83,8 @@ Strict restrictions:
 
 - no UI communication;
 - no MariaDB access;
-- no persistence;
-- no scheduler ownership;
-- no calls to History Service;
+- no MariaDB persistence;
+- no calls to History Service except authenticated snapshot delivery;
 - no application idempotency.
 
 3. Responsibility Boundaries
@@ -145,10 +142,9 @@ Strict restrictions:
 
 The AbuseIPDB blacklist is treated as a point-in-time provider snapshot.
 
-History Service periodically requests a normalized blacklist snapshot from
-Provider Service and stores the full contents of every accepted snapshot.
-
-Provider Service must not schedule requests or persist blacklist data.
+Provider Service periodically fetches normalized blacklist snapshots, stores
+pending delivery durably in a local SQLite outbox, and sends them to History.
+History validates and persists accepted snapshots in MariaDB.
 
 ### Default synchronization configuration
 
@@ -157,43 +153,26 @@ Provider Service must not schedule requests or persist blacklist data.
 - base synchronization interval: 21600 seconds (six hours);
 - UI status polling interval: 30 seconds.
 
-The confidence threshold, scheduler enablement, base interval, stale threshold,
+The confidence threshold, Provider worker enablement, base interval, stale threshold,
 temporary-attempt bound, and jitter bound are configurable. The initial
 complete-snapshot limit is fixed at no more than 1000 entries.
 
-### Scheduler ownership
+### Polling ownership
 
-The scheduler currently runs inside History Service.
-
-It must be started through the application lifespan and stopped gracefully
-during application shutdown.
-
-The scheduler must not be started:
-
-- by Provider Service;
-- by UI Service;
-- during Alembic commands;
-- during ordinary unit tests;
-- once per Uvicorn worker without coordination.
-
-The initial deployment must run only one scheduler-enabled History Service
-process.
-
-A configuration flag must allow the scheduler to be disabled:
-
-`BLACKLIST_SCHEDULER_ENABLED=false`
+The standalone Provider worker is the only periodic polling owner. It is
+independent of API worker count, protected by a singleton lock, and disabled by
+default with `BLACKLIST_POLLING_ENABLED=false`.
 
 ### Synchronization behavior
 
 A synchronization attempt must:
 
-1. create or register a synchronization run;
-2. request a normalized blacklist from Provider Service;
-3. validate response metadata and entries;
-4. reject or ignore a duplicate provider snapshot;
-5. persist the snapshot and all entries transactionally;
-6. store rate-limit metadata;
-7. mark the synchronization run as successful or failed.
+1. have the Provider worker request and normalize an AbuseIPDB snapshot;
+2. commit the normalized payload and stable delivery ID to the local outbox;
+3. deliver it to History's authenticated ingestion endpoint;
+4. have History validate and idempotently accept the delivery;
+5. persist the snapshot, entries, and summary metrics transactionally;
+6. acknowledge the delivery so Provider can remove it from the outbox.
 
 A failed synchronization must not replace or delete the latest successful
 snapshot.
@@ -210,7 +189,7 @@ Provider Service must extract and return, where available:
 - `X-RateLimit-Reset`;
 - `Retry-After`.
 
-History Service owns the retry decision.
+Provider Service owns polling and delivery retry decisions.
 
 Rules:
 
@@ -248,7 +227,9 @@ The blacklist synchronization flow must not write to it.
 Accepted complete snapshots are retained historically. The initial
 implementation has no automatic snapshot-retention or pruning job.
 
-Charts and analytical dashboards are outside the current UI scope.
+Blacklist analytics are computed by History from persisted MariaDB snapshots.
+UI may render those results but must not aggregate complete histories in the
+browser or contact Provider to produce charts.
 
 10. Errors, Tracing & Logs
 
@@ -280,14 +261,15 @@ Charts and analytical dashboards are outside the current UI scope.
 - zero remaining quota;
 - bounded retry behavior;
 - database rollback;
-- application shutdown while the scheduler is waiting;
-- scheduler disabled in tests;
+- worker shutdown while polling or delivery is waiting;
+- Provider polling disabled in ordinary tests;
+- durable outbox recovery after worker restart;
 - UI retaining the last successful snapshot after a synchronization failure.
 
 
 12. Agent Workflow
 
-    Boundary Enforcement: The completed architecture is UI ➔ History ➔ Provider ➔ AbuseIPDB. Provider must never orchestrate persistence or call History, and UI must never call Provider directly.
+    Boundary Enforcement: Manual lookup is UI ➔ History ➔ Provider ➔ AbuseIPDB. Periodic synchronization is Provider ➔ AbuseIPDB ➔ Provider outbox ➔ History ➔ MariaDB. Analytics is UI ➔ History ➔ MariaDB. Provider may call only AbuseIPDB and History, and must never access UI or MariaDB.
 
     Agent Task Workflow:
 

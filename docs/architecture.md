@@ -51,11 +51,11 @@ Responsibilities:
 
 Additional responsibilities:
 
-- periodically synchronize AbuseIPDB blacklist data;
+- receive and persist normalized blacklist snapshots from Provider;
 - preserve complete historical snapshots;
 - record synchronization attempts and failures;
-- use provider rate-limit metadata when determining the next attempt;
 - expose locally persisted blacklist data to UI;
+- compute blacklist analytics from MariaDB;
 - retain the latest successful snapshot after an update failure.
 
 The initial implementation retains every accepted complete snapshot and has no
@@ -84,63 +84,69 @@ Responsibilities:
 
 Additional responsibilities:
 
+- own periodic AbuseIPDB blacklist polling and History delivery retries;
+- retain pending deliveries in a durable local SQLite outbox;
 - call the AbuseIPDB blacklist endpoint;
 - validate every returned blacklist entry;
 - normalize IPv4 and IPv6 addresses;
 - extract rate-limit response headers;
 - return normalized snapshot metadata and entries.
 
-Provider Service does not decide when synchronization should occur.
+Provider Service owns the periodic polling decision.
 
 Restrictions:
 - no public application history API;
 - no direct UI access;
 - no MariaDB access;
-- no persistence logic;
+- no MariaDB persistence;
 - no idempotency logic;
-- no calls to History Service;
+- no History calls except authenticated blacklist snapshot delivery;
 - no arbitrary upstream URLs from request input.
 
 *Only Provider Service stores and uses the AbuseIPDB API key.*
 
-History Service exposes no internal persistence endpoints. Provider Service has
-no route or client for writing to History Service.
+History Service exposes one authenticated blacklist snapshot-ingestion
+endpoint. Provider Service has no other write path into History.
 
 ---
 
 ## Blacklist synchronization flow
 
 ```text
-1. History Service determines that synchronization is due.
-2. History Service creates a synchronization run.
-3. History Service requests GET /internal/v1/blacklist from Provider Service.
-4. Provider Service requests GET /api/v2/blacklist from AbuseIPDB.
-5. Provider Service validates and normalizes the response.
-6. Provider Service returns snapshot data and rate-limit metadata.
-7. History Service checks whether the snapshot is new.
-8. History Service stores the snapshot and every entry in one transaction.
-9. History Service records the successful synchronization run.
-10. UI later reads the latest persisted snapshot from History Service.
+1. The standalone Provider worker determines that polling is due.
+2. Provider requests GET /api/v2/blacklist from AbuseIPDB.
+3. Provider validates and normalizes the response.
+4. Provider commits the snapshot to its local SQLite outbox.
+5. Provider delivers it to History's authenticated ingestion endpoint.
+6. History validates the stable delivery ID and snapshot.
+7. History stores the snapshot and every entry in one transaction.
+8. Provider records the acknowledgement and removes the pending payload.
+9. UI later reads the latest persisted snapshot from History Service.
 ```
 
 ```text
-History Service scheduler
-       |
-       v
-Provider Service
-       |
-       v
-AbuseIPDB
-       |
-       v
-Provider Service
-       |
-       v
-History Service
-       |
-       v
-MariaDB
+Provider worker -> AbuseIPDB -> Provider SQLite outbox -> History -> MariaDB
 ```
+
+The API process is not a dependency of the standalone worker. The worker and
+API share Provider code and configuration, not process lifecycle.
+
+## Manual lookup flow
+
+```text
+UI -> History -> Provider -> AbuseIPDB
+```
+
+The normalized result returns along the same path; History persists successful
+manual checks before responding to UI.
+
+## Analytics flow
+
+```text
+UI -> History -> MariaDB
+```
+
+Analytics use persisted snapshots only. They never call Provider or AbuseIPDB.
 
 ## UI refresh flow
 
@@ -163,11 +169,9 @@ table.
 If synchronization fails, UI continues displaying the latest successful
 snapshot and shows a stale-data or synchronization warning where appropriate.
 
-The in-process scheduler is controlled by `BLACKLIST_SCHEDULER_ENABLED` and is
-disabled by default. Its default interval is 21600 seconds (six hours). Exactly
-one History Service worker may enable it; additional Uvicorn workers must run
-with the scheduler disabled. The scheduler reads persisted `next_attempt_at`
-state and does not bypass a future rate-limit reset.
+The standalone Provider worker is independent of API worker count and protected
+by a singleton lock. Polling and History-delivery retries use separate durable
+clocks.
 
 
 
@@ -196,7 +200,9 @@ Provider Service owns the internal provider API:
 * `POST /internal/v1/reputation-checks`
 * `GET /internal/v1/blacklist`
 
-Only History Service may call these endpoints.
+Only History Service may call these Provider endpoints. History separately owns
+`POST /internal/v1/blacklist/snapshots`, which accepts only authenticated
+Provider worker deliveries.
 *The provider contract must not expose unnecessary raw AbuseIPDB response data.*
 
 ---
@@ -270,14 +276,16 @@ is not read or written by blacklist synchronization.
 
 - **May receive:** `PROVIDER_SERVICE_URL`, phase-specific `PROVIDER_*_TIMEOUT_SECONDS`,
   `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DATABASE`, `MARIADB_USER`,
-  `MARIADB_PASSWORD`, and the `BLACKLIST_*` scheduler settings documented in
-  `services/history-service/.env.example`
+  `MARIADB_PASSWORD`, `HISTORY_INGESTION_TOKEN`, and ingestion limits
+  documented in `services/history-service/.env.example`
 * **Must not receive:** `ABUSEIPDB_API_KEY`
 
 ### Provider Service
 
-* **May receive:** `ABUSEIPDB_BASE_URL`, `ABUSEIPDB_API_KEY`, HTTP timeout settings
-* **Must not receive:** `HISTORY_SERVICE_URL`, `DATABASE_URL`, `MARIADB_PASSWORD`
+* **May receive:** `ABUSEIPDB_BASE_URL`, `ABUSEIPDB_API_KEY`, HTTP timeout
+  settings, Provider polling/outbox settings, `HISTORY_SERVICE_URL`, and
+  `HISTORY_INGESTION_TOKEN`
+* **Must not receive:** UI URLs, `DATABASE_URL`, `MARIADB_PASSWORD`
 
 ---
 
@@ -340,7 +348,10 @@ Each service exposes:
 **Provider Service**
 
 * **live:** confirms the process can serve requests.
-* **ready:** confirms local initialization and required configuration. (It must not consume AbuseIPDB quota during readiness checks).
+* **ready:** confirms local initialization and required configuration. It
+  reports polling ownership and configured enablement without consuming
+  AbuseIPDB quota. The separately supervised worker must be checked
+  independently.
 
 ---
 
@@ -358,17 +369,20 @@ MariaDB          127.0.0.1:3306
 
 Only UI Service should be reachable externally.
 
-The internal request direction is:
+The manual request direction is:
 
 ```text
 UI :8000
   -> History :8002
   -> Provider :8001
   -> AbuseIPDB
-
 ```
 
-History Service separately accesses MariaDB on port `3306`.
+Periodic synchronization is:
 
-The initial UI is tabular. Charts and analytical dashboards are outside the
-current scope.
+```text
+Provider worker -> AbuseIPDB -> Provider outbox -> History :8002 -> MariaDB
+```
+
+Analytics are `UI -> History -> MariaDB`. Provider never accesses UI or
+MariaDB.

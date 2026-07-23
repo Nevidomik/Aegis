@@ -184,6 +184,8 @@ async def test_blacklist_page_displays_ready_snapshot_with_ipv4_and_ipv6(
         "pair_limit": 10,
         "request_id": request_id,
     }
+    assert application_client.blacklist_turnover_request is not None
+    assert application_client.blacklist_turnover_request["interval"] == "day"
 
 
 @pytest.mark.anyio
@@ -209,6 +211,7 @@ async def test_blacklist_page_displays_empty_state_without_loading_entries(
     assert "Blacklist entries" not in response.text
     assert application_client.blacklist_request is None
     assert application_client.blacklist_analytics_request is None
+    assert application_client.blacklist_turnover_request is None
 
 
 @pytest.mark.anyio
@@ -362,6 +365,17 @@ async def test_blacklist_dashboard_is_server_rendered_and_accessible(
     assert "View country data table" in response.text
     assert "View IP version data table" in response.text
     assert "Changes between recent accepted snapshot pairs" in response.text
+    assert '<h3 id="turnover-chart-heading">Snapshot turnover</h3>' in response.text
+    assert (
+        '<h3 id="address-change-chart-heading">Added and removed IP addresses</h3>'
+        in response.text
+    )
+    assert 'aria-label="Turnover chart range"' in response.text
+    assert 'aria-current="page">30 days</a>' in response.text
+    assert "Blacklist turnover data for the selected 30-day range" in response.text
+    assert "50.0%" in response.text
+    assert 'data-turnover-chart="line"' in response.text
+    assert 'data-turnover-chart="bars"' in response.text
     assert "Retained entries" in response.text
     assert "Confidence threshold" in response.text
     assert "Unknown" in response.text
@@ -387,6 +401,43 @@ async def test_blacklist_analytics_failure_preserves_entry_table(
     assert "internal analytics dependency detail" not in response.text
     assert "Blacklist entries" in response.text
     assert "8.8.8.8" in response.text
+
+
+@pytest.mark.anyio
+async def test_turnover_failure_preserves_dashboard_and_snapshot_analytics(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    application_client.blacklist_turnover_error = "internal turnover dependency detail"
+
+    response = await client.get("/blacklist")
+
+    assert response.status_code == 200
+    assert "Turnover history is temporarily unavailable." in response.text
+    assert "internal turnover dependency detail" not in response.text
+    assert "Snapshot analytics" in response.text
+    assert "Blacklist entries" in response.text
+    assert "8.8.8.8" in response.text
+
+
+@pytest.mark.anyio
+async def test_turnover_range_controls_request_supported_bounded_range(
+    client: AsyncClient, application_client: FakeApplicationClient
+) -> None:
+    response = await client.get("/blacklist?range_days=90")
+
+    assert response.status_code == 200
+    assert 'aria-current="page">90 days</a>' in response.text
+    request = application_client.blacklist_turnover_request
+    assert request is not None
+    assert request["interval"] == "day"
+    assert (request["to"] - request["from"]).days == 90
+
+
+@pytest.mark.anyio
+async def test_invalid_turnover_range_is_rejected(client: AsyncClient) -> None:
+    response = await client.get("/blacklist?range_days=14")
+
+    assert response.status_code == 422
 
 
 @pytest.mark.anyio
@@ -437,3 +488,5 @@ async def test_blacklist_dashboard_css_is_local_and_responsive(
     assert stylesheet.headers["content-type"].startswith("text/css")
     assert "@media (max-width: 44rem)" in stylesheet.text
     assert ".chart-grid" in stylesheet.text
+    assert ".turnover-chart-grid" in stylesheet.text
+    assert ".turnover-line" in stylesheet.text

@@ -21,6 +21,8 @@ from ui_service.schemas import (
     BlacklistSnapshotChurn,
     BlacklistSnapshotSummary,
     BlacklistStatus,
+    BlacklistTurnover,
+    BlacklistTurnoverPoint,
     CheckResult,
     HistoryPage,
 )
@@ -137,12 +139,30 @@ class FakeApplicationClient:
                 )
             ],
         )
+        self.blacklist_turnover_result = BlacklistTurnover(
+            **{
+                "from": datetime(2026, 6, 23, tzinfo=UTC),
+                "to": datetime(2026, 7, 23, tzinfo=UTC),
+                "interval": "day",
+                "points": [
+                    BlacklistTurnoverPoint(
+                        period_start=datetime(2026, 7, 22, tzinfo=UTC),
+                        turnover_percent=50.0,
+                        added_count=1,
+                        removed_count=2,
+                        snapshot_id=42,
+                    )
+                ],
+            }
+        )
         self.blacklist_status_error: str | None = None
         self.blacklist_error: str | None = None
         self.blacklist_analytics_error: str | None = None
+        self.blacklist_turnover_error: str | None = None
         self.blacklist_status_request_id: str | None = None
         self.blacklist_request: dict[str, object] | None = None
         self.blacklist_analytics_request: dict[str, object] | None = None
+        self.blacklist_turnover_request: dict[str, object] | None = None
 
     async def ready(self, *, request_id: str) -> None:
         self.ready_request_id = request_id
@@ -197,6 +217,24 @@ class FakeApplicationClient:
         if self.blacklist_analytics_error is not None:
             raise ApplicationClientError(self.blacklist_analytics_error)
         return self.blacklist_analytics_result
+
+    async def blacklist_turnover(
+        self,
+        *,
+        from_: datetime,
+        to: datetime,
+        interval: str,
+        request_id: str,
+    ) -> BlacklistTurnover:
+        self.blacklist_turnover_request = {
+            "from": from_,
+            "to": to,
+            "interval": interval,
+            "request_id": request_id,
+        }
+        if self.blacklist_turnover_error is not None:
+            raise ApplicationClientError(self.blacklist_turnover_error)
+        return self.blacklist_turnover_result
 
 
 @pytest.fixture

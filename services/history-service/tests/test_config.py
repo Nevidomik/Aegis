@@ -45,7 +45,7 @@ def test_provider_configuration_is_separate_from_database_credentials() -> None:
     assert settings.provider_pool_timeout_seconds == 4
 
 
-def test_blacklist_sync_configuration_has_safe_bounded_defaults() -> None:
+def test_history_keeps_only_read_side_blacklist_configuration() -> None:
     settings = Settings(
         _env_file=None,
         mariadb_database="aegis_history",
@@ -53,9 +53,22 @@ def test_blacklist_sync_configuration_has_safe_bounded_defaults() -> None:
         mariadb_password="secret",
     )
 
-    assert settings.blacklist_confidence_minimum == 90
-    assert settings.blacklist_scheduler_enabled is False
-    assert settings.blacklist_sync_interval_seconds == 21600
-    assert settings.blacklist_maximum_temporary_attempts == 4
-    assert settings.blacklist_maximum_jitter_seconds == 30
-    assert settings.blacklist_sync_deadline_seconds == 30
+    assert settings.blacklist_stale_after_seconds == 43200
+    assert not hasattr(settings, "blacklist_scheduler_enabled")
+    assert not hasattr(settings, "blacklist_sync_interval_seconds")
+    assert settings.provider_ingestion_token is None
+
+
+def test_provider_ingestion_token_is_secret_and_bounded() -> None:
+    token = "provider-ingestion-token-at-least-32-characters"
+    settings = Settings(
+        _env_file=None,
+        mariadb_database="aegis_history",
+        mariadb_user="history",
+        mariadb_password="secret",
+        provider_ingestion_token=token,
+    )
+
+    assert settings.provider_ingestion_token is not None
+    assert settings.provider_ingestion_token.get_secret_value() == token
+    assert token not in repr(settings)

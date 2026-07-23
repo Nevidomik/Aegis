@@ -1,20 +1,15 @@
 """FastAPI application for the Aegis history service."""
 
-import asyncio
-import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Protocol, cast
+from typing import cast
 
 import httpx
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.types import ExceptionHandler
 
-from history_service.blacklist_scheduler import BlacklistScheduler
-from history_service.blacklist_sync import create_blacklist_sync_service
 from history_service.config import Settings, get_settings
-from history_service.database import get_session_factory
 from history_service.exceptions import ApplicationError
 from history_service.provider_client import ProviderClient
 from history_service.routes import (
@@ -27,15 +22,6 @@ from history_service.routes import (
     validation_exception_handler,
 )
 from history_service.service import HistoryUnavailableError, IdempotencyConflictError
-
-logger = logging.getLogger(__name__)
-
-
-class Scheduler(Protocol):
-    async def run(self, stop_event: asyncio.Event) -> None: ...
-
-
-SchedulerFactory = Callable[[Settings, ProviderClient], Scheduler]
 
 
 def create_provider_http_client(settings: Settings) -> httpx.Client:
@@ -52,76 +38,40 @@ def create_provider_http_client(settings: Settings) -> httpx.Client:
     )
 
 
-def create_blacklist_scheduler(
-    settings: Settings, provider: ProviderClient
-) -> BlacklistScheduler:
-    """Build the scheduler without starting its recurring loop."""
-    return BlacklistScheduler(
-        sync_service=create_blacklist_sync_service(settings),
-        provider=provider,
-        session_factory=get_session_factory(),
-        sync_deadline_seconds=settings.blacklist_sync_deadline_seconds,
-    )
-
-
 @asynccontextmanager
 async def managed_lifespan(
     application: FastAPI,
     settings: Settings,
-    scheduler_factory: SchedulerFactory,
 ) -> AsyncIterator[None]:
-    """Own the Provider client and optional scheduler task."""
+    """Own only the Provider client used for manual reputation lookups."""
     http_client = create_provider_http_client(settings)
     application.state.provider_client = ProviderClient(http_client)
-    stop_event: asyncio.Event | None = None
-    scheduler_task: asyncio.Task[None] | None = None
-    if settings.blacklist_scheduler_enabled:
-        stop_event = asyncio.Event()
-        scheduler = scheduler_factory(settings, application.state.provider_client)
-        scheduler_task = asyncio.create_task(
-            scheduler.run(stop_event), name="history-blacklist-scheduler"
-        )
-        application.state.blacklist_scheduler_task = scheduler_task
-        application.state.blacklist_scheduler_stop_event = stop_event
-    else:
-        logger.info("blacklist_scheduler_disabled")
     try:
         yield
     finally:
-        if stop_event is not None:
-            logger.info("blacklist_scheduler_stopping")
-            stop_event.set()
-        try:
-            if scheduler_task is not None:
-                await scheduler_task
-        finally:
-            http_client.close()
+        http_client.close()
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Use environment-backed dependencies for the default application."""
-    async with managed_lifespan(
-        application, get_settings(), create_blacklist_scheduler
-    ):
+    async with managed_lifespan(application, get_settings()):
         yield
 
 
 def create_app(
     *,
     settings: Settings | None = None,
-    scheduler_factory: SchedulerFactory | None = None,
 ) -> FastAPI:
     """Create an independently configured History application."""
-    if settings is None and scheduler_factory is None:
+    if settings is None:
         selected_lifespan = lifespan
     else:
-        configured = settings or get_settings()
-        factory = scheduler_factory or create_blacklist_scheduler
+        configured = settings
 
         @asynccontextmanager
         async def selected_lifespan(application: FastAPI) -> AsyncIterator[None]:
-            async with managed_lifespan(application, configured, factory):
+            async with managed_lifespan(application, configured):
                 yield
 
     application = FastAPI(

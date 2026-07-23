@@ -6,7 +6,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from history_service.blacklist_repository import BlacklistRepository
+from history_service.blacklist_repository import (
+    BlacklistRepository,
+    TurnoverSnapshotSummary,
+)
 from history_service.config import get_settings
 from history_service.models import BlacklistSnapshot, BlacklistSyncRun
 from history_service.schemas import (
@@ -27,6 +30,9 @@ from history_service.schemas import (
     BlacklistSnapshotListQuery,
     BlacklistSnapshotSummary,
     BlacklistStatusResponse,
+    BlacklistTurnoverPoint,
+    BlacklistTurnoverQuery,
+    BlacklistTurnoverResponse,
 )
 from history_service.service import HistoryUnavailableError
 
@@ -185,6 +191,72 @@ class BlacklistReadService:
             ],
         )
 
+    def turnover(
+        self, session: Session, query: BlacklistTurnoverQuery
+    ) -> BlacklistTurnoverResponse:
+        """Return bounded UTC buckets from persisted snapshot summaries only."""
+        try:
+            records = self.repository.turnover_snapshots_between(
+                session,
+                provider="AbuseIPDB",
+                from_=query.from_,
+                to=query.to,
+            )
+        except SQLAlchemyError as error:
+            raise HistoryUnavailableError from error
+
+        latest_by_bucket: dict[datetime, TurnoverSnapshotSummary] = {}
+        for record in records:
+            period_start = self._period_start(
+                record.provider_generated_at, query.interval
+            )
+            previous = latest_by_bucket.get(period_start)
+            if previous is None or (
+                record.provider_generated_at,
+                record.snapshot_id,
+            ) > (
+                previous.provider_generated_at,
+                previous.snapshot_id,
+            ):
+                latest_by_bucket[period_start] = record
+
+        points: list[BlacklistTurnoverPoint] = []
+        period_start = self._period_start(query.from_, query.interval)
+        step = self._interval_step(query.interval)
+        while period_start < query.to:
+            bucket_record = latest_by_bucket.get(period_start)
+            points.append(
+                BlacklistTurnoverPoint(
+                    period_start=period_start,
+                    turnover_percent=(
+                        float(bucket_record.turnover_percent)
+                        if bucket_record is not None
+                        and bucket_record.turnover_percent is not None
+                        else None
+                    ),
+                    added_count=(
+                        bucket_record.added_count if bucket_record is not None else None
+                    ),
+                    removed_count=(
+                        bucket_record.removed_count
+                        if bucket_record is not None
+                        else None
+                    ),
+                    snapshot_id=(
+                        bucket_record.snapshot_id if bucket_record is not None else None
+                    ),
+                )
+            )
+            period_start += step
+        return BlacklistTurnoverResponse(
+            **{
+                "from": query.from_,
+                "to": query.to,
+                "interval": query.interval,
+                "points": points,
+            }
+        )
+
     @staticmethod
     def _empty_analytics() -> BlacklistAnalyticsResponse:
         return BlacklistAnalyticsResponse(
@@ -206,6 +278,24 @@ class BlacklistReadService:
         if minimum == 90:
             return 94
         return minimum + 9
+
+    @staticmethod
+    def _interval_step(interval: str) -> timedelta:
+        return {
+            "hour": timedelta(hours=1),
+            "day": timedelta(days=1),
+            "week": timedelta(weeks=1),
+        }[interval]
+
+    @staticmethod
+    def _period_start(value: datetime, interval: str) -> datetime:
+        current = BlacklistReadService._utc(value)
+        day_start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+        if interval == "hour":
+            return current.replace(minute=0, second=0, microsecond=0)
+        if interval == "day":
+            return day_start
+        return day_start - timedelta(days=day_start.weekday())
 
     def _page(
         self,

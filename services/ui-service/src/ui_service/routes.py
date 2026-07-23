@@ -2,6 +2,8 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from enum import IntEnum
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
@@ -21,6 +23,7 @@ from ui_service.schemas import (
     BlacklistPage,
     BlacklistPollStatus,
     BlacklistStatus,
+    BlacklistTurnover,
     CheckResult,
     HistoryPage,
 )
@@ -37,6 +40,12 @@ BLACKLIST_SCRIPT = (Path(__file__).parent / "static" / "blacklist.js").read_text
 BLACKLIST_STYLE = (Path(__file__).parent / "static" / "blacklist.css").read_text(
     encoding="utf-8"
 )
+
+
+class TurnoverRange(IntEnum):
+    seven_days = 7
+    thirty_days = 30
+    ninety_days = 90
 
 
 def request_id_for(request: Request) -> str:
@@ -160,13 +169,16 @@ async def blacklist(
     request: Request,
     application_client: Annotated[ApplicationClient, Depends(get_application_client)],
     page: Annotated[int, Query(ge=1)] = 1,
+    range_days: TurnoverRange = TurnoverRange.thirty_days,
 ) -> HTMLResponse:
     request_id = request_id_for(request)
     status_result: BlacklistStatus | None = None
     blacklist_page: BlacklistPage | None = None
     analytics: BlacklistAnalytics | None = None
+    turnover: BlacklistTurnover | None = None
     error: str | None = None
     analytics_error: str | None = None
+    turnover_error: str | None = None
 
     try:
         status_result = await application_client.blacklist_status(request_id=request_id)
@@ -189,6 +201,18 @@ async def blacklist(
             )
         except ApplicationClientError:
             analytics_error = "Snapshot analytics are temporarily unavailable."
+        range_to = datetime.now(UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + timedelta(days=1)
+        try:
+            turnover = await application_client.blacklist_turnover(
+                from_=range_to - timedelta(days=range_days),
+                to=range_to,
+                interval="day",
+                request_id=request_id,
+            )
+        except ApplicationClientError:
+            turnover_error = "Turnover history is temporarily unavailable."
 
     response = templates.TemplateResponse(
         request=request,
@@ -197,9 +221,17 @@ async def blacklist(
             "status": status_result,
             "blacklist": blacklist_page,
             "analytics": analytics,
+            "turnover": turnover,
+            "turnover_points": (
+                turnover.model_dump(mode="json", by_alias=True)["points"]
+                if turnover is not None
+                else []
+            ),
             "error": error,
             "analytics_error": analytics_error,
+            "turnover_error": turnover_error,
             "page": page,
+            "range_days": range_days,
         },
     )
     response.headers["X-Request-ID"] = request_id

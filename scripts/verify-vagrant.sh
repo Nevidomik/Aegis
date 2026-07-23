@@ -106,6 +106,11 @@ no_root_application_process() {
     "ps -eo user=,args= | awk '\$1 == \"root\" && index(\$0, \"${entry_point}\") { found=1 } END { exit found }'"
 }
 
+provider_outbox_is_private() {
+  timeout 30 vagrant ssh provider-vm -c \
+    "test \"\$(stat -c '%U:%G:%a' /var/lib/aegis-provider)\" = 'aegis:aegis:750' && sudo -u aegis test -r /var/lib/aegis-provider && sudo -u aegis test -w /var/lib/aegis-provider"
+}
+
 for vm in db-vm provider-vm history-vm ui-vm; do
   check "${vm} is running" vm_is_running "${vm}"
 done
@@ -142,6 +147,8 @@ check "History blacklist status" guest_http_ok ui-vm \
 check "MariaDB systemd unit is active" unit_is_active db-vm mariadb.service
 check "Provider systemd unit is active" unit_is_active provider-vm \
   aegis-provider.service
+check "Provider blacklist worker is active" unit_is_active provider-vm \
+  aegis-provider-blacklist-worker.service
 check "History systemd unit is active" unit_is_active history-vm \
   aegis-history.service
 check "UI systemd unit is active" unit_is_active ui-vm aegis-ui.service
@@ -155,6 +162,10 @@ check "UI can communicate with History" guest_http_ok ui-vm \
 
 check "Provider process runs as aegis" unit_runs_as_aegis provider-vm \
   aegis-provider.service
+check "Provider blacklist worker runs as aegis" unit_runs_as_aegis provider-vm \
+  aegis-provider-blacklist-worker.service
+check "Provider outbox directory is private and writable" \
+  provider_outbox_is_private
 check "History process runs as aegis" unit_runs_as_aegis history-vm \
   aegis-history.service
 check "UI process runs as aegis" unit_runs_as_aegis ui-vm aegis-ui.service

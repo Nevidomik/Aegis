@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 readonly PASSWORD_FILE="/tmp/aegis-mariadb-password"
+readonly INGESTION_TOKEN_FILE="/tmp/aegis-provider-history-token"
 readonly ENVIRONMENT_DIRECTORY="/etc/aegis"
 readonly ENVIRONMENT_FILE="${ENVIRONMENT_DIRECTORY}/history.env"
 readonly SERVICE_FILE="/etc/systemd/system/aegis-history.service"
@@ -20,7 +21,9 @@ fail() {
 
 [[ -f "${PASSWORD_FILE}" ]] || \
   fail "missing MariaDB password upload; check AEGIS_DATABASE_SECRET_FILE"
-trap 'rm -f "${PASSWORD_FILE}"' EXIT
+[[ -f "${INGESTION_TOKEN_FILE}" ]] || \
+  fail "missing ingestion token upload; check AEGIS_INGESTION_SECRET_FILE"
+trap 'rm -f "${PASSWORD_FILE}" "${INGESTION_TOKEN_FILE}"' EXIT
 [[ -x "${VENV_DIRECTORY}/bin/uvicorn" ]] || \
   fail "History virtual environment is not installed"
 [[ -x "${VENV_DIRECTORY}/bin/alembic" ]] || fail "Alembic is not installed"
@@ -28,16 +31,21 @@ trap 'rm -f "${PASSWORD_FILE}"' EXIT
 [[ -d "${SERVICE_DIRECTORY}/alembic" ]] || fail "migration files are not installed"
 
 MARIADB_PASSWORD="$(<"${PASSWORD_FILE}")"
+INGESTION_TOKEN="$(<"${INGESTION_TOKEN_FILE}")"
 [[ -n "${MARIADB_PASSWORD}" ]] || fail "MariaDB password must not be empty"
 [[ "${MARIADB_PASSWORD}" != *$'\n'* ]] || \
   fail "MariaDB password file must contain exactly one line"
 [[ "${MARIADB_PASSWORD}" =~ ^[A-Za-z0-9._~!@%^+=:-]+$ ]] || \
   fail "MariaDB password contains unsupported characters"
+[[ ${#INGESTION_TOKEN} -ge 32 ]] || \
+  fail "Provider-History ingestion token must contain at least 32 characters"
+[[ "${INGESTION_TOKEN}" =~ ^[A-Za-z0-9._~!@%^+=:-]+$ ]] || \
+  fail "Provider-History ingestion token contains unsupported characters"
 
 install -d -o root -g aegis -m 0750 "${ENVIRONMENT_DIRECTORY}"
 temporary_environment="$(mktemp)"
 temporary_service="$(mktemp)"
-trap 'rm -f "${temporary_environment}" "${temporary_service}" "${PASSWORD_FILE}"' EXIT
+trap 'rm -f "${temporary_environment}" "${temporary_service}" "${PASSWORD_FILE}" "${INGESTION_TOKEN_FILE}"' EXIT
 
 {
   printf 'MARIADB_HOST=%s\n' "${DATABASE_ADDRESS}"
@@ -50,13 +58,8 @@ trap 'rm -f "${temporary_environment}" "${temporary_service}" "${PASSWORD_FILE}"
   printf 'PROVIDER_READ_TIMEOUT_SECONDS=10\n'
   printf 'PROVIDER_WRITE_TIMEOUT_SECONDS=5\n'
   printf 'PROVIDER_POOL_TIMEOUT_SECONDS=5\n'
-  printf 'BLACKLIST_CONFIDENCE_MINIMUM=90\n'
-  printf 'BLACKLIST_SCHEDULER_ENABLED=true\n'
-  printf 'BLACKLIST_SYNC_INTERVAL_SECONDS=21600\n'
+  printf 'PROVIDER_INGESTION_TOKEN=%s\n' "${INGESTION_TOKEN}"
   printf 'BLACKLIST_STALE_AFTER_SECONDS=43200\n'
-  printf 'BLACKLIST_MAXIMUM_TEMPORARY_ATTEMPTS=4\n'
-  printf 'BLACKLIST_MAXIMUM_JITTER_SECONDS=30\n'
-  printf 'BLACKLIST_SYNC_DEADLINE_SECONDS=30\n'
 } >"${temporary_environment}"
 install -o root -g aegis -m 0640 "${temporary_environment}" "${ENVIRONMENT_FILE}"
 

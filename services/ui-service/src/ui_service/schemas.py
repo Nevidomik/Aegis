@@ -99,6 +99,7 @@ class BlacklistStatus(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    polling_owner: Literal["provider"] = "provider"
     state: Literal["empty", "ready", "syncing", "stale", "degraded"]
     sync_in_progress: StrictBool
     latest_snapshot_id: StrictInt | None = Field(default=None, gt=0)
@@ -313,6 +314,43 @@ class BlacklistAnalytics(BaseModel):
         if [item.ip_version for item in self.ip_versions] != [4, 6]:
             raise ValueError("IP version analytics must be ordered as IPv4 and IPv6.")
         return self
+
+
+class BlacklistTurnoverPoint(BaseModel):
+    """One persisted History turnover bucket."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_start: datetime
+    turnover_percent: float | None
+    added_count: StrictInt | None = Field(default=None, ge=0, le=1000)
+    removed_count: StrictInt | None = Field(default=None, ge=0, le=1000)
+    snapshot_id: StrictInt | None = Field(default=None, gt=0)
+
+    @field_validator("period_start")
+    @classmethod
+    def validate_period_start(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Timestamps must include a timezone.")
+        return value
+
+
+class BlacklistTurnover(BaseModel):
+    """Strict UI boundary for History turnover time-series data."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_: datetime = Field(alias="from")
+    to: datetime
+    interval: Literal["hour", "day", "week"]
+    points: list[BlacklistTurnoverPoint] = Field(max_length=366)
+
+    @field_validator("from_", "to")
+    @classmethod
+    def validate_range_timestamp(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Timestamps must include a timezone.")
+        return value
 
 
 class ReadinessResponse(BaseModel):

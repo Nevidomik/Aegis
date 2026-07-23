@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
 )
@@ -99,20 +101,41 @@ class BlacklistSnapshot(Base):
             "OR rate_limit_remaining <= rate_limit_limit",
             name="ck_blacklist_snapshots_rate_consistency",
         ),
+        CheckConstraint(
+            "added_count IS NULL OR added_count >= 0",
+            name="ck_blacklist_snapshots_added_count",
+        ),
+        CheckConstraint(
+            "removed_count IS NULL OR removed_count >= 0",
+            name="ck_blacklist_snapshots_removed_count",
+        ),
+        CheckConstraint(
+            "turnover_percent IS NULL OR turnover_percent BETWEEN 0 AND 100",
+            name="ck_blacklist_snapshots_turnover",
+        ),
         {"mariadb_engine": "InnoDB", "mariadb_charset": "utf8mb4"},
     )
 
     snapshot_id: Mapped[int] = mapped_column(
         BigInteger, primary_key=True, autoincrement=True
     )
+    delivery_id: Mapped[str | None] = mapped_column(
+        String(36), unique=True, nullable=True
+    )
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_generated_at: Mapped[datetime] = mapped_column(
         DATETIME(fsp=6), nullable=False
     )
     fetched_at: Mapped[datetime] = mapped_column(DATETIME(fsp=6), nullable=False)
+    received_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6), nullable=True)
     confidence_minimum: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     requested_limit: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     returned_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    added_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    removed_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    turnover_percent: Mapped[Decimal | None] = mapped_column(
+        Numeric(7, 2), nullable=True
+    )
     rate_limit_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rate_limit_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rate_limit_reset_at: Mapped[datetime | None] = mapped_column(
@@ -168,6 +191,13 @@ Index(
     BlacklistSnapshot.provider,
     BlacklistSnapshot.provider_generated_at,
     unique=True,
+)
+Index(
+    "ix_blacklist_snapshots_change_baseline",
+    BlacklistSnapshot.provider,
+    BlacklistSnapshot.confidence_minimum,
+    BlacklistSnapshot.requested_limit,
+    BlacklistSnapshot.snapshot_id,
 )
 Index(
     "uq_blacklist_entries_snapshot_ip",

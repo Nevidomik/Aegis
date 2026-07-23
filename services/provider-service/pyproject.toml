@@ -14,6 +14,9 @@ dependencies = [
   "uvicorn[standard]",
 ]
 
+[project.scripts]
+aegis-provider-blacklist-worker = "provider_service.blacklist_worker:main"
+
 [project.optional-dependencies]
 dev = [
   "httpx2",

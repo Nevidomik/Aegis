@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from provider_service.config import Settings, get_settings
 from provider_service.exceptions import ApplicationError
 from provider_service.provider import AbuseIPDBProvider, get_reputation_provider
 from provider_service.schemas import (
@@ -106,13 +107,18 @@ async def request_id_middleware(
 @router.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
     """Confirm that the Provider process is running."""
-    return {"status": "ok"}
+    return {"status": "ok", "blacklist_polling_owner": "provider"}
 
 
 @router.get("/health/ready", tags=["health"])
-async def readiness() -> dict[str, str]:
+async def readiness() -> dict[str, str | bool]:
     """Confirm that Provider initialized with its required configuration."""
-    return {"status": "ready"}
+    settings: Settings = get_settings()
+    return {
+        "status": "ready",
+        "blacklist_polling_owner": "provider",
+        "blacklist_polling_enabled": settings.blacklist_polling_enabled,
+    }
 
 
 @router.post(

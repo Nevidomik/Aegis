@@ -103,6 +103,11 @@ class ProviderClient:
             raise ProviderServiceInvalidResponseError(
                 code="PROVIDER_SERVICE_INVALID_RESPONSE"
             )
+        addresses = [item.ip_address for item in result.items]
+        if len(addresses) != len(set(addresses)):
+            raise ProviderServiceInvalidResponseError(
+                code="PROVIDER_SERVICE_INVALID_RESPONSE"
+            )
         return result
 
 

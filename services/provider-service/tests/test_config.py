@@ -29,3 +29,21 @@ def test_provider_env_file_is_absolute_and_service_local() -> None:
     assert SERVICE_ENV_FILE.is_absolute()
     assert SERVICE_ENV_FILE == Settings.model_config["env_file"]
     assert SERVICE_ENV_FILE.parent.name == "provider-service"
+
+
+def test_blacklist_worker_is_disabled_by_default() -> None:
+    settings = Settings(_env_file=None, abuseipdb_api_key="test-key")
+
+    assert settings.blacklist_polling_enabled is False
+    assert settings.blacklist_poll_interval_seconds == 21600
+    assert settings.blacklist_confidence_minimum == 90
+    assert settings.history_ingestion_token is None
+
+
+def test_enabled_worker_requires_history_secret() -> None:
+    with pytest.raises(ValidationError, match="HISTORY_INGESTION_TOKEN"):
+        Settings(
+            _env_file=None,
+            abuseipdb_api_key="test-key",
+            blacklist_polling_enabled=True,
+        )

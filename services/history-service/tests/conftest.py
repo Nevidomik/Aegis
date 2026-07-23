@@ -7,7 +7,9 @@ from uuid import UUID
 import fastapi.dependencies.utils
 import fastapi.routing
 import pytest
+from history_service.blacklist_ingestion import get_blacklist_ingestion_service
 from history_service.blacklist_read import get_blacklist_read_service
+from history_service.config import get_settings
 from history_service.database import get_session
 from history_service.main import app
 from history_service.models import IpCheckHistory
@@ -120,3 +122,5 @@ def override_dependency() -> Iterator[Any]:
     app.dependency_overrides.pop(get_application_service, None)
     app.dependency_overrides.pop(get_provider_client, None)
     app.dependency_overrides.pop(get_blacklist_read_service, None)
+    app.dependency_overrides.pop(get_blacklist_ingestion_service, None)
+    app.dependency_overrides.pop(get_settings, None)

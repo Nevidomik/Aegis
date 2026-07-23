@@ -50,9 +50,16 @@ async def test_health_endpoints_are_local_and_preserve_request_id(
     ready = await client.get("/health/ready", headers={"X-Request-ID": REQUEST_ID})
 
     assert live.status_code == 200
-    assert live.json() == {"status": "ok"}
+    assert live.json() == {
+        "status": "ok",
+        "blacklist_polling_owner": "provider",
+    }
     assert ready.status_code == 200
-    assert ready.json() == {"status": "ready"}
+    assert ready.json() == {
+        "status": "ready",
+        "blacklist_polling_owner": "provider",
+        "blacklist_polling_enabled": False,
+    }
     assert live.headers["X-Request-ID"] == REQUEST_ID
     assert ready.headers["X-Request-ID"] == REQUEST_ID
 
