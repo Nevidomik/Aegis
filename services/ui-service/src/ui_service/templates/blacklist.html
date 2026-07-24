@@ -27,7 +27,8 @@
     {% if status %}
     <section aria-labelledby="status-heading">
       <h2 id="status-heading">Synchronization status</h2>
-      <div id="blacklist-state-indicator" data-state="{{ status.state }}">
+      <div id="blacklist-state-indicator" data-state="{{ status.state }}"
+        data-latest-snapshot-id="{{ status.latest_snapshot_id or '' }}">
         {% if status.state == "empty" %}
         <p>No successful blacklist snapshot is available yet.</p>
         {% elif status.state == "syncing" %}
@@ -428,11 +429,15 @@
   {% if status %}
   <script src="/static/blacklist.js"></script>
   <script>
-    window.BlacklistPolling.start({
-      currentSnapshotId: {{ status.latest_snapshot_id | tojson }},
-      statusUrl: "/blacklist/status",
-      indicator: document.getElementById("blacklist-state-indicator")
-        });
+    (function () {
+      var indicator = document.getElementById("blacklist-state-indicator");
+      var snapshotId = Number(indicator.dataset.latestSnapshotId) || null;
+      window.BlacklistPolling.start({
+        currentSnapshotId: snapshotId,
+        statusUrl: "/blacklist/status",
+        indicator: indicator
+      });
+    })();
   </script>
   {% endif %}
 </body>
