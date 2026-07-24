@@ -4,98 +4,26 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Aegis IP Reputation</title>
-    <style>
-      :root {
-        color-scheme: light;
-        font-family: system-ui, sans-serif;
-        line-height: 1.5;
-      }
-      body {
-        background: #f5f7fa;
-        color: #17202a;
-        margin: 0;
-      }
-      main {
-        margin: 2rem auto;
-        max-width: 62rem;
-        padding: 0 1rem;
-      }
-      section {
-        background: white;
-        border: 1px solid #dce2e8;
-        border-radius: 0.5rem;
-        margin-bottom: 1.25rem;
-        padding: 1.25rem;
-      }
-      form {
-        align-items: end;
-        display: grid;
-        gap: 1rem;
-        grid-template-columns: minmax(14rem, 1fr) 10rem auto;
-      }
-      label {
-        display: grid;
-        font-weight: 600;
-        gap: 0.35rem;
-      }
-      input, button {
-        border: 1px solid #9aa8b5;
-        border-radius: 0.35rem;
-        font: inherit;
-        padding: 0.6rem;
-      }
-      button {
-        background: #174ea6;
-        border-color: #174ea6;
-        color: white;
-        cursor: pointer;
-        font-weight: 600;
-      }
-      .error {
-        background: #fff0f0;
-        border-left: 0.3rem solid #b42318;
-        padding: 0.75rem;
-      }
-      dl {
-        display: grid;
-        grid-template-columns: 14rem 1fr;
-        margin: 0;
-      }
-      dt, dd {
-        border-bottom: 1px solid #edf0f2;
-        margin: 0;
-        padding: 0.4rem;
-      }
-      dt { font-weight: 600; }
-      table {
-        border-collapse: collapse;
-        width: 100%;
-      }
-      th, td {
-        border-bottom: 1px solid #dce2e8;
-        padding: 0.55rem;
-        text-align: left;
-      }
-      .table-wrap { overflow-x: auto; }
-      @media (max-width: 44rem) {
-        form { grid-template-columns: 1fr; }
-        dl { grid-template-columns: 1fr; }
-        dt { border-bottom: 0; padding-bottom: 0; }
-      }
-    </style>
+    <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
+    <header class="site-header">
+      <a class="wordmark" href="/">Aegis</a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="/" aria-current="page">Overview</a>
+        <a href="/blacklist">Blacklist</a>
+      </nav>
+    </header>
     <main>
-      <h1>Aegis IP Reputation</h1>
-      <p>Check a globally routable IPv4 or IPv6 address.</p>
-      <p><a href="/blacklist">View the latest blacklist snapshot</a></p>
+      <h1>IP reputation check</h1>
+      <p class="page-intro">Look up a globally routable IPv4 or IPv6 address against stored history and reporting data.</p>
 
       <section aria-labelledby="check-heading">
         <h2 id="check-heading">New check</h2>
         <form method="post" action="/">
           <label>
             IP address
-            <input name="ip_address" value="{{ ip_address }}" required autocomplete="off">
+            <input name="ip_address" value="{{ ip_address }}" placeholder="203.0.113.42" required autocomplete="off">
           </label>
           <label>
             Max age in days
@@ -104,17 +32,18 @@
           <button type="submit">Check reputation</button>
         </form>
         {% if error %}
-          <p class="error" role="alert">{{ error }}</p>
+          <p class="error" role="alert" style="margin-top: 1rem;">{{ error }}</p>
         {% endif %}
       </section>
 
       {% if result %}
+        {% set score_class = "severity-high" if result.abuse_confidence_score >= 75 else ("severity-medium" if result.abuse_confidence_score >= 25 else "severity-low") %}
         <section aria-labelledby="result-heading">
           <h2 id="result-heading">Current normalized result</h2>
           <dl>
             <dt>IP address</dt><dd>{{ result.ip_address }}</dd>
             <dt>IP version</dt><dd>IPv{{ result.ip_version }}</dd>
-            <dt>Abuse confidence score</dt><dd>{{ result.abuse_confidence_score }}%</dd>
+            <dt>Abuse confidence score</dt><dd><span class="severity {{ score_class }}">{{ result.abuse_confidence_score }}%</span></dd>
             <dt>Whitelisted</dt><dd>{% if result.is_whitelisted is none %}Unknown{% elif result.is_whitelisted %}Yes{% else %}No{% endif %}</dd>
             <dt>Country</dt><dd>{{ result.country_code or "Unknown" }}</dd>
             <dt>Usage type</dt><dd>{{ result.usage_type or "Unknown" }}</dd>
@@ -147,9 +76,10 @@
               </thead>
               <tbody>
                 {% for item in history.items %}
+                  {% set row_class = "severity-high" if item.abuse_confidence_score >= 75 else ("severity-medium" if item.abuse_confidence_score >= 25 else "severity-low") %}
                   <tr>
                     <td>{{ item.ip_address }}</td>
-                    <td>{{ item.abuse_confidence_score }}%</td>
+                    <td><span class="severity {{ row_class }}">{{ item.abuse_confidence_score }}%</span></td>
                     <td>{{ item.total_reports }}</td>
                     <td>{{ item.country_code or "Unknown" }}</td>
                     <td>{{ item.checked_at }}</td>
@@ -158,7 +88,7 @@
               </tbody>
             </table>
           </div>
-          <p>Showing {{ history.items|length }} of {{ history.total }} stored checks.</p>
+          <p class="page-intro">Showing {{ history.items|length }} of {{ history.total }} stored checks.</p>
         {% else %}
           <p>No checks have been stored yet.</p>
         {% endif %}

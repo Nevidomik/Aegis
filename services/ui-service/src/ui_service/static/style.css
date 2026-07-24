@@ -1,0 +1,406 @@
+/* Aegis — shared design tokens and base components.
+   Palette and type reference a scanning/instrument-panel idea: a dark
+   console with a single teal "signal" color for healthy/clear readings,
+   amber for caution, and red reserved for genuine severity. System font
+   stacks only — no external font requests, so the console keeps working
+   behind a strict CSP or on an internal network with no outbound access. */
+
+:root {
+    color-scheme: dark;
+
+    --ink: #0a0e13;
+    --panel: #10161d;
+    --panel-raised: #151d25;
+    --hairline: #212b34;
+    --hairline-strong: #2c3846;
+
+    --text: #e8eef3;
+    --text-dim: #8ca0af;
+    --text-faint: #5d707e;
+
+    --accent: #2fd9c4;
+    --accent-strong: #6ce8d8;
+    --accent-dim: rgba(47, 217, 196, 0.14);
+
+    --warn: #f2a93b;
+    --warn-dim: rgba(242, 169, 59, 0.14);
+
+    --danger: #ff6767;
+    --danger-dim: rgba(255, 103, 103, 0.14);
+
+    --mono: ui-monospace, "SFMono-Regular", "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --radius: 10px;
+    --radius-sm: 6px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    font-family: var(--sans);
+}
+
+body {
+    background: var(--ink);
+    background-image:
+        radial-gradient(circle at 12% 0%, rgba(47, 217, 196, 0.05), transparent 40%),
+        radial-gradient(circle at 88% 8%, rgba(242, 169, 59, 0.04), transparent 35%);
+    background-attachment: fixed;
+    color: var(--text);
+    line-height: 1.55;
+    margin: 0;
+}
+
+a {
+    color: var(--accent-strong);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ---------- header / wordmark ---------- */
+
+.site-header {
+    border-bottom: 1px solid var(--hairline);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.5rem;
+}
+
+.wordmark {
+    align-items: center;
+    color: var(--text);
+    display: inline-flex;
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    gap: 0.55rem;
+    letter-spacing: 0.16em;
+    text-decoration: none;
+    text-transform: uppercase;
+}
+
+.wordmark::before {
+    background: var(--accent);
+    border-radius: 2px;
+    box-shadow: 0 0 10px var(--accent-dim);
+    content: "";
+    display: inline-block;
+    height: 0.65rem;
+    width: 0.65rem;
+}
+
+.site-nav {
+    display: flex;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    gap: 1.4rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.site-nav a {
+    color: var(--text-dim);
+    padding-bottom: 0.2rem;
+    text-decoration: none;
+}
+
+.site-nav a:hover {
+    color: var(--text);
+}
+
+.site-nav a[aria-current="page"] {
+    border-bottom: 2px solid var(--accent);
+    color: var(--text);
+}
+
+/* ---------- layout ---------- */
+
+main {
+    margin: 0 auto;
+    max-width: 68rem;
+    padding: 2rem 1.5rem 3rem;
+}
+
+.page-intro {
+    color: var(--text-dim);
+    margin: -0.25rem 0 1.75rem;
+}
+
+h1 {
+    font-family: var(--mono);
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0 0 0.4rem;
+}
+
+h2 {
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    margin: 0 0 1rem;
+    text-transform: uppercase;
+}
+
+h2::before {
+    color: var(--text-faint);
+    content: "// ";
+}
+
+h3 {
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.3rem;
+}
+
+section {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+    padding: 1.4rem 1.5rem;
+}
+
+/* ---------- status messages ---------- */
+
+.error,
+.warning,
+.notice {
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.9rem;
+}
+
+.error {
+    background: var(--danger-dim);
+    border-left: 3px solid var(--danger);
+    color: var(--text);
+}
+
+.warning {
+    background: var(--warn-dim);
+    border-left: 3px solid var(--warn);
+    color: var(--text);
+}
+
+.notice {
+    background: var(--panel-raised);
+    border-left: 3px solid var(--text-faint);
+    color: var(--text-dim);
+    font-size: 0.9rem;
+}
+
+/* ---------- forms ---------- */
+
+form {
+    align-items: end;
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: minmax(14rem, 1fr) 10rem auto;
+}
+
+label {
+    color: var(--text-dim);
+    display: grid;
+    font-size: 0.85rem;
+    font-weight: 600;
+    gap: 0.4rem;
+}
+
+input {
+    background: var(--panel-raised);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font: inherit;
+    padding: 0.6rem 0.7rem;
+}
+
+input::placeholder {
+    color: var(--text-faint);
+}
+
+button {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    color: #04211d;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.65rem 1rem;
+    text-transform: uppercase;
+    transition: background-color 120ms ease;
+}
+
+button:hover {
+    background: var(--accent-strong);
+}
+
+/* ---------- definition lists ---------- */
+
+dl {
+    display: grid;
+    grid-template-columns: 15rem 1fr;
+    margin: 0;
+}
+
+dt,
+dd {
+    border-bottom: 1px solid var(--hairline);
+    margin: 0;
+    padding: 0.5rem 0.25rem;
+}
+
+dt {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+dd {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- tables ---------- */
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+th,
+td {
+    border-bottom: 1px solid var(--hairline);
+    padding: 0.6rem 0.55rem;
+    text-align: left;
+}
+
+thead th {
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+td {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+}
+
+.table-wrap {
+    overflow-x: auto;
+}
+
+/* ---------- severity ---------- */
+
+.severity {
+    border-radius: 999px;
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+}
+
+.severity-low {
+    background: var(--accent-dim);
+    color: var(--accent-strong);
+}
+
+.severity-medium {
+    background: var(--warn-dim);
+    color: var(--warn);
+}
+
+.severity-high {
+    background: var(--danger-dim);
+    color: var(--danger);
+}
+
+/* ---------- meters (used on the blacklist page) ---------- */
+
+meter {
+    appearance: none;
+    background: var(--hairline);
+    border: none;
+    border-radius: 999px;
+    height: 0.55rem;
+}
+
+meter::-webkit-meter-bar {
+    background: var(--hairline);
+    border: none;
+    border-radius: 999px;
+}
+
+meter::-webkit-meter-optimum-value {
+    background: var(--accent);
+    border-radius: 999px;
+}
+
+meter::-moz-meter-bar {
+    background: var(--accent);
+    border-radius: 999px;
+}
+
+details summary {
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+details summary:hover {
+    color: var(--text);
+}
+
+@media (max-width: 44rem) {
+    main {
+        padding: 1.5rem 1rem 2.5rem;
+    }
+
+    form {
+        grid-template-columns: 1fr;
+    }
+
+    dl {
+        grid-template-columns: 1fr;
+    }
+
+    dt {
+        border-bottom: 0;
+        padding-bottom: 0;
+    }
+
+    .site-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.001ms !important;
+        transition-duration: 0.001ms !important;
+    }
+}

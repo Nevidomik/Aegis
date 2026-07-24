@@ -40,6 +40,9 @@ BLACKLIST_SCRIPT = (Path(__file__).parent / "static" / "blacklist.js").read_text
 BLACKLIST_STYLE = (Path(__file__).parent / "static" / "blacklist.css").read_text(
     encoding="utf-8"
 )
+BASE_STYLE = (Path(__file__).parent / "static" / "style.css").read_text(
+    encoding="utf-8"
+)
 
 
 class TurnoverRange(IntEnum):
@@ -121,6 +124,11 @@ def render_page(
 @router.get("/health/live", tags=["health"])
 async def liveness() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/static/style.css", include_in_schema=False)
+async def base_style() -> Response:
+    return Response(content=BASE_STYLE, media_type="text/css")
 
 
 @router.get("/static/blacklist.js", include_in_schema=False)
